@@ -4,7 +4,7 @@ import asyncio
 import logging
 import random
 import time
-from typing import Any, AsyncIterator, Iterator
+from typing import Any, AsyncIterator, Iterator, cast
 
 import httpx
 
@@ -222,7 +222,7 @@ class Client:
 
                     self._handle_error(response)
 
-                return response.json()
+                return cast(dict[str, Any], response.json())
 
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_exception = e
@@ -287,7 +287,7 @@ class Client:
 
                     self._handle_error(response)
 
-                return response.json()
+                return cast(dict[str, Any], response.json())
 
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_exception = e
@@ -346,7 +346,7 @@ class Client:
                 "actorType": actor_type.value,
             },
         )
-        return data["queryJobId"]
+        return str(data["queryJobId"])
 
     async def submit_job_async(
         self,
@@ -367,7 +367,7 @@ class Client:
                 "actorType": actor_type.value,
             },
         )
-        return data["queryJobId"]
+        return str(data["queryJobId"])
 
     def get_job_status(self, query_job_id: str) -> JobStatus:
         """Get the status of a query job.
@@ -447,7 +447,7 @@ class Client:
             f"/api/v1/queries/{query_job_id}/cancel",
             json={"reason": reason or "Canceled by user"},
         )
-        return data["queryJobId"]
+        return str(data["queryJobId"])
 
     async def cancel_job_async(
         self,
@@ -460,7 +460,7 @@ class Client:
             f"/api/v1/queries/{query_job_id}/cancel",
             json={"reason": reason or "Canceled by user"},
         )
-        return data["queryJobId"]
+        return str(data["queryJobId"])
 
     def get_query_history(
         self,
