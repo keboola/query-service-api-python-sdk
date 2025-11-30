@@ -4,7 +4,8 @@ import asyncio
 import logging
 import random
 import time
-from typing import Any, AsyncIterator, Iterator, cast
+from collections.abc import AsyncIterator, Iterator
+from typing import Any, cast
 
 import httpx
 
@@ -12,9 +13,9 @@ from ._version import __version__
 from .exceptions import (
     AuthenticationError,
     JobError,
+    JobTimeoutError,
     NotFoundError,
     QueryServiceError,
-    JobTimeoutError,
     ValidationError,
 )
 from .models import (
@@ -31,9 +32,11 @@ logger = logging.getLogger(__name__)
 class Client:
     """Client for Keboola Query Service API.
 
-    Important: Use either sync methods OR async methods, not both on the same client instance.
-    For sync operations, use context manager `with Client(...) as client:` or call `close()`.
-    For async operations, use `async with Client(...) as client:` or `await close_async()`.
+    Important: Use either sync methods OR async methods, not both on the same
+    client instance. For sync operations, use context manager
+    `with Client(...) as client:` or call `close()`.
+    For async operations, use `async with Client(...) as client:`
+    or `await close_async()`.
 
     Example (sync):
         >>> with Client(
@@ -105,7 +108,8 @@ class Client:
             "X-StorageAPI-Token": self.token,
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": user_agent or f"keboola-query-service-python-sdk/{__version__}",
+            "User-Agent": user_agent
+            or f"keboola-query-service-python-sdk/{__version__}",
         }
 
     def _get_async_client(self) -> httpx.AsyncClient:
@@ -232,8 +236,8 @@ class Client:
                     jitter = random.uniform(0, 0.1)
                     total_wait = wait_time + jitter
                     logger.warning(
-                        f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}), "
-                        f"retrying in {total_wait:.2f}s: {e}"
+                        f"Request failed (attempt {attempt + 1}/"
+                        f"{self.max_retries + 1}), retrying in {total_wait:.2f}s: {e}"
                     )
                     time.sleep(total_wait)
                     continue
@@ -297,8 +301,8 @@ class Client:
                     jitter = random.uniform(0, 0.1)
                     total_wait = wait_time + jitter
                     logger.warning(
-                        f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}), "
-                        f"retrying in {total_wait:.2f}s: {e}"
+                        f"Request failed (attempt {attempt + 1}/"
+                        f"{self.max_retries + 1}), retrying in {total_wait:.2f}s: {e}"
                     )
                     await asyncio.sleep(total_wait)
                     continue

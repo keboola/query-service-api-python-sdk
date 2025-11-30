@@ -112,26 +112,27 @@ Exceptions
 
 from ._version import __version__
 from .client import Client
-from .models import (
-    ActorType,
-    JobState,
-    StatementState,
-    Column,
-    Statement,
-    JobStatus,
-    QueryResult,
-    QueryHistory,
-)
 from .exceptions import (
-    QueryServiceError,
     AuthenticationError,
-    ValidationError,
-    NotFoundError,
     JobError,
     JobTimeoutError,
+    NotFoundError,
+    QueryServiceError,
+    ValidationError,
+)
+from .models import (
+    ActorType,
+    Column,
+    JobState,
+    JobStatus,
+    QueryHistory,
+    QueryResult,
+    Statement,
+    StatementState,
 )
 
 __all__ = [
+    "__version__",
     "Client",
     "ActorType",
     "JobState",
