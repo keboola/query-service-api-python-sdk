@@ -16,6 +16,7 @@ from .exceptions import (
     QueryServiceError,
     AuthenticationError,
     ValidationError,
+    NotFoundError,
     JobError,
     JobTimeoutError,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "QueryServiceError",
     "AuthenticationError",
     "ValidationError",
+    "NotFoundError",
     "JobError",
     "JobTimeoutError",
 ]

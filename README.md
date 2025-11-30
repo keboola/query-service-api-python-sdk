@@ -14,22 +14,36 @@ pip install keboola-query-service
 from keboola_query_service import Client
 
 # Initialize client
+# IMPORTANT: Use query.keboola.com (NOT connection.keboola.com)
+# Don't append /api/v1 - the SDK handles routing automatically
 client = Client(
-    base_url="https://query.keboola.com",
-    token="your-storage-api-token"
+    base_url="https://query.keboola.com",  # Query Service URL
+    token="your-storage-api-token"          # Your Keboola Storage API token
 )
 
-# Execute a query and wait for results
+# Execute a query
+# - branch_id: Find in Keboola UI URL or via Storage API
+# - workspace_id: Your workspace ID from Keboola
 results = client.execute_query(
-    branch_id="123",
-    workspace_id="456",
+    branch_id="1261313",
+    workspace_id="2950146661",
     statements=["SELECT * FROM my_table LIMIT 10"]
 )
 
-# Access results
-for row in results[0].data:
-    print(row)
+# Process results - one QueryResult per statement
+for result in results:
+    print("Columns:", [col.name for col in result.columns])
+    print("Data:", result.data)
+
+# Always close the client when done
+client.close()
 ```
+
+### Finding Your IDs
+
+- **branch_id**: Found in the Keboola Connection URL (e.g., `https://connection.keboola.com/admin/projects/123/...` → branch is in the Storage API)
+- **workspace_id**: Go to Transformations → Workspace → Copy the workspace ID from URL or details
+- **token**: Settings → API Tokens → Create new token with appropriate permissions
 
 ## Features
 
@@ -66,6 +80,21 @@ with Client(base_url="https://query.keboola.com", token="...") as client:
     print(f"Rows: {len(orders_result.data)}")
 ```
 
+### Using Context Manager (Recommended)
+
+```python
+from keboola_query_service import Client
+
+# Context manager automatically closes the client
+with Client(base_url="https://query.keboola.com", token="...") as client:
+    results = client.execute_query(
+        branch_id="1261313",
+        workspace_id="2950146661",
+        statements=["SELECT 1 as test"]
+    )
+    print(results[0].data)  # [['1']]
+```
+
 ### Async Usage
 
 ```python
@@ -73,11 +102,11 @@ import asyncio
 from keboola_query_service import Client
 
 async def main():
-    async with Client(base_url="...", token="...") as client:
+    async with Client(base_url="https://query.keboola.com", token="...") as client:
         results = await client.execute_query_async(
-            branch_id="123",
-            workspace_id="456",
-            statements=["SELECT 1"]
+            branch_id="1261313",
+            workspace_id="2950146661",
+            statements=["SELECT 1 as test"]
         )
         print(results[0].data)
 
