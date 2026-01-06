@@ -1,5 +1,6 @@
 """Data models for Keboola Query Service SDK."""
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -201,4 +202,12 @@ def _parse_datetime(value: str | None) -> datetime | None:
     # Handle ISO format with Z suffix
     if value.endswith("Z"):
         value = value[:-1] + "+00:00"
+    # Normalize fractional seconds to 6 digits for Python 3.10 compatibility
+    # Python 3.10's fromisoformat() doesn't handle arbitrary precision
+    match = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d+)(.*)$", value)
+    if match:
+        base, frac, suffix = match.groups()
+        # Pad or truncate to exactly 6 digits (microseconds)
+        frac = frac[:6].ljust(6, "0")
+        value = f"{base}.{frac}{suffix}"
     return datetime.fromisoformat(value)
