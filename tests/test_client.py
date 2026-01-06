@@ -244,3 +244,66 @@ class TestModels:
         assert JobState.CANCELED.is_terminal()
         assert not JobState.PROCESSING.is_terminal()
         assert not JobState.CREATED.is_terminal()
+
+
+class TestParseDatetime:
+    """Tests for _parse_datetime function (Python 3.10 compatibility)."""
+
+    def test_parse_datetime_none(self):
+        from keboola_query_service.models import _parse_datetime
+
+        assert _parse_datetime(None) is None
+        assert _parse_datetime("") is None
+
+    def test_parse_datetime_z_suffix(self):
+        from keboola_query_service.models import _parse_datetime
+        from datetime import datetime, timezone
+
+        result = _parse_datetime("2024-01-15T10:30:45Z")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+
+    def test_parse_datetime_with_timezone(self):
+        from keboola_query_service.models import _parse_datetime
+        from datetime import datetime, timezone
+
+        result = _parse_datetime("2024-01-15T10:30:45+00:00")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+
+    def test_parse_datetime_6_digit_fractional_seconds(self):
+        from keboola_query_service.models import _parse_datetime
+        from datetime import datetime, timezone
+
+        result = _parse_datetime("2024-01-15T10:30:45.123456+00:00")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=timezone.utc)
+
+    def test_parse_datetime_5_digit_fractional_seconds(self):
+        """Test Python 3.10 compatibility: 5-digit fractional seconds should be padded."""
+        from keboola_query_service.models import _parse_datetime
+        from datetime import datetime, timezone
+
+        result = _parse_datetime("2024-01-15T10:30:45.12345+00:00")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, 123450, tzinfo=timezone.utc)
+
+    def test_parse_datetime_more_than_6_digit_fractional_seconds(self):
+        """Test Python 3.10 compatibility: >6-digit fractional seconds should be truncated."""
+        from keboola_query_service.models import _parse_datetime
+        from datetime import datetime, timezone
+
+        result = _parse_datetime("2024-01-15T10:30:45.1234567890+00:00")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=timezone.utc)
+
+    def test_parse_datetime_3_digit_fractional_seconds(self):
+        """Test Python 3.10 compatibility: 3-digit fractional seconds should be padded."""
+        from keboola_query_service.models import _parse_datetime
+        from datetime import datetime, timezone
+
+        result = _parse_datetime("2024-01-15T10:30:45.123+00:00")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=timezone.utc)
+
+    def test_parse_datetime_z_suffix_with_fractional_seconds(self):
+        """Test Z suffix combined with fractional seconds."""
+        from keboola_query_service.models import _parse_datetime
+        from datetime import datetime, timezone
+
+        result = _parse_datetime("2024-01-15T10:30:45.12345Z")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, 123450, tzinfo=timezone.utc)
