@@ -1,5 +1,7 @@
 """Tests for Keboola Query Service Client."""
 
+import json
+
 import pytest
 from pytest_httpx import HTTPXMock
 
@@ -235,6 +237,63 @@ class TestExecuteQuery:
 
         assert exc_info.value.job_id == "job-abc123"
         assert "does not exist" in str(exc_info.value)
+
+
+_SUBMIT_URL = "https://query.test.keboola.com/api/v1/branches/123/workspaces/456/queries"
+_STATUS_URL = "https://query.test.keboola.com/api/v1/queries/job-1"
+_RESULTS_URL = "https://query.test.keboola.com/api/v1/queries/job-1/stmt-1/results?offset=0&pageSize=500"
+
+_STATUS_COMPLETED = {
+    "queryJobId": "job-1",
+    "status": "completed",
+    "actorType": "user",
+    "createdAt": "2024-01-01T00:00:00Z",
+    "changedAt": "2024-01-01T00:01:00Z",
+    "statements": [{"id": "stmt-1", "query": "SELECT 1", "status": "completed"}],
+}
+
+_RESULTS_COMPLETED = {
+    "status": "completed",
+    "columns": [{"name": "1", "type": "NUMBER", "nullable": False, "length": 1}],
+    "data": [["1"]],
+    "numberOfRows": 1,
+}
+
+
+class TestSessionId:
+    def test_submit_job_sends_session_id(self, client: Client, httpx_mock: HTTPXMock) -> None:
+        httpx_mock.add_response(method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201)
+        client.submit_job("123", "456", ["SELECT 1"], session_id="sess-123")
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert body["sessionId"] == "sess-123"
+
+    def test_submit_job_omits_session_id_by_default(self, client: Client, httpx_mock: HTTPXMock) -> None:
+        httpx_mock.add_response(method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201)
+        client.submit_job("123", "456", ["SELECT 1"])
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert "sessionId" not in body
+
+    async def test_submit_job_async_sends_session_id(self, client: Client, httpx_mock: HTTPXMock) -> None:
+        httpx_mock.add_response(method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201)
+        await client.submit_job_async("123", "456", ["SELECT 1"], session_id="sess-async")
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert body["sessionId"] == "sess-async"
+
+    def test_execute_query_forwards_session_id(self, client: Client, httpx_mock: HTTPXMock) -> None:
+        httpx_mock.add_response(method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201)
+        httpx_mock.add_response(method="GET", url=_STATUS_URL, json=_STATUS_COMPLETED)
+        httpx_mock.add_response(method="GET", url=_RESULTS_URL, json=_RESULTS_COMPLETED)
+        client.execute_query("123", "456", ["SELECT 1"], session_id="sess-exec")
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert body["sessionId"] == "sess-exec"
+
+    async def test_execute_query_async_forwards_session_id(self, client: Client, httpx_mock: HTTPXMock) -> None:
+        httpx_mock.add_response(method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201)
+        httpx_mock.add_response(method="GET", url=_STATUS_URL, json=_STATUS_COMPLETED)
+        httpx_mock.add_response(method="GET", url=_RESULTS_URL, json=_RESULTS_COMPLETED)
+        await client.execute_query_async("123", "456", ["SELECT 1"], session_id="sess-exec-async")
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert body["sessionId"] == "sess-exec-async"
 
 
 class TestModels:
