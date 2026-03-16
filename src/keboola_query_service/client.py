@@ -348,7 +348,7 @@ class Client:
             "transactional": transactional,
             "actorType": actor_type.value,
         }
-        if session_id:
+        if session_id is not None:
             body["sessionId"] = session_id
         data = self._request(
             "POST",
@@ -373,7 +373,7 @@ class Client:
             "transactional": transactional,
             "actorType": actor_type.value,
         }
-        if session_id:
+        if session_id is not None:
             body["sessionId"] = session_id
         data = await self._request_async(
             "POST",
