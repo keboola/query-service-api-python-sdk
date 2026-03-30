@@ -329,6 +329,7 @@ class Client:
         transactional: bool = True,
         actor_type: ActorType = ActorType.USER,
         session_id: str | None = None,
+        refresh_metadata_on_success: bool = False,
     ) -> str:
         """Submit a query job without waiting for completion.
 
@@ -339,6 +340,8 @@ class Client:
             transactional: Whether to execute statements in a transaction
             actor_type: Actor type (user or system)
             session_id: Optional session ID to reuse a Snowflake session across calls
+            refresh_metadata_on_success: Whether to refresh workspace
+                metadata after successful execution
 
         Returns:
             Query job ID
@@ -350,6 +353,8 @@ class Client:
         }
         if session_id is not None:
             body["sessionId"] = session_id
+        if refresh_metadata_on_success:
+            body["refreshMetadataOnSuccess"] = True
         data = self._request(
             "POST",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
@@ -366,6 +371,7 @@ class Client:
         transactional: bool = True,
         actor_type: ActorType = ActorType.USER,
         session_id: str | None = None,
+        refresh_metadata_on_success: bool = False,
     ) -> str:
         """Submit a query job without waiting (async version)."""
         body: dict[str, object] = {
@@ -375,6 +381,8 @@ class Client:
         }
         if session_id is not None:
             body["sessionId"] = session_id
+        if refresh_metadata_on_success:
+            body["refreshMetadataOnSuccess"] = True
         data = await self._request_async(
             "POST",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
@@ -627,6 +635,7 @@ class Client:
         actor_type: ActorType = ActorType.USER,
         max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
         session_id: str | None = None,
+        refresh_metadata_on_success: bool = False,
     ) -> list[QueryResult]:
         """Execute query and wait for results.
 
@@ -641,6 +650,8 @@ class Client:
             actor_type: Actor type
             max_wait_time: Maximum time to wait for completion
             session_id: Optional session ID to reuse a Snowflake session across calls
+            refresh_metadata_on_success: Whether to refresh workspace
+                metadata after successful execution
 
         Returns:
             List of QueryResult, one per statement
@@ -657,6 +668,7 @@ class Client:
             transactional=transactional,
             actor_type=actor_type,
             session_id=session_id,
+            refresh_metadata_on_success=refresh_metadata_on_success,
         )
 
         # Wait for completion
@@ -680,6 +692,7 @@ class Client:
         actor_type: ActorType = ActorType.USER,
         max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
         session_id: str | None = None,
+        refresh_metadata_on_success: bool = False,
     ) -> list[QueryResult]:
         """Execute query and wait for results (async version)."""
         # Submit job
@@ -690,6 +703,7 @@ class Client:
             transactional=transactional,
             actor_type=actor_type,
             session_id=session_id,
+            refresh_metadata_on_success=refresh_metadata_on_success,
         )
 
         # Wait for completion

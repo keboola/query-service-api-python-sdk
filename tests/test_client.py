@@ -296,6 +296,70 @@ class TestSessionId:
         assert body["sessionId"] == "sess-exec-async"
 
 
+class TestRefreshMetadataOnSuccess:
+    def test_submit_job_sends_refresh_metadata_on_success(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201,
+        )
+        client.submit_job(
+            "123", "456", ["SELECT 1"], refresh_metadata_on_success=True,
+        )
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert body["refreshMetadataOnSuccess"] is True
+
+    def test_submit_job_omits_refresh_metadata_on_success_by_default(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201,
+        )
+        client.submit_job("123", "456", ["SELECT 1"])
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert "refreshMetadataOnSuccess" not in body
+
+    async def test_submit_job_async_sends_refresh_metadata_on_success(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201,
+        )
+        await client.submit_job_async(
+            "123", "456", ["SELECT 1"], refresh_metadata_on_success=True,
+        )
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert body["refreshMetadataOnSuccess"] is True
+
+    def test_execute_query_forwards_refresh_metadata_on_success(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201,
+        )
+        httpx_mock.add_response(method="GET", url=_STATUS_URL, json=_STATUS_COMPLETED)
+        httpx_mock.add_response(method="GET", url=_RESULTS_URL, json=_RESULTS_COMPLETED)
+        client.execute_query(
+            "123", "456", ["SELECT 1"], refresh_metadata_on_success=True,
+        )
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert body["refreshMetadataOnSuccess"] is True
+
+    async def test_execute_query_async_forwards_refresh_metadata_on_success(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            method="POST", url=_SUBMIT_URL, json={"queryJobId": "job-1"}, status_code=201,
+        )
+        httpx_mock.add_response(method="GET", url=_STATUS_URL, json=_STATUS_COMPLETED)
+        httpx_mock.add_response(method="GET", url=_RESULTS_URL, json=_RESULTS_COMPLETED)
+        await client.execute_query_async(
+            "123", "456", ["SELECT 1"], refresh_metadata_on_success=True,
+        )
+        body = json.loads(httpx_mock.get_requests()[0].content)
+        assert body["refreshMetadataOnSuccess"] is True
+
+
 class TestModels:
     def test_job_state_is_terminal(self):
         assert JobState.COMPLETED.is_terminal()
