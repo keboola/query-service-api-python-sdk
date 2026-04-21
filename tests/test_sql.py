@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
+from uuid import UUID
 
 import pytest
 
@@ -274,3 +276,37 @@ class TestLiteralLists:
     def test_nested_list_raises(self) -> None:
         with pytest.raises(TypeError, match="Nested"):
             SQL("snowflake").literal([1, [2, 3]])
+
+
+class TestLiteralSafeSqlPassthrough:
+    def test_literal_passes_safesql_unchanged(self) -> None:
+        sql = SQL("snowflake")
+        marker = sql.raw("CURRENT_TIMESTAMP")
+        result = sql.literal(marker)
+        assert result is marker  # identity-preserving
+
+    def test_literal_passes_ident_unchanged(self) -> None:
+        sql = SQL("snowflake")
+        i = sql.ident("in.c-main", "customers")
+        assert sql.literal(i) is i
+
+
+class TestLiteralUnknownTypes:
+    def test_rejects_decimal_with_str_hint(self) -> None:
+        with pytest.raises(TypeError, match="convert to str"):
+            SQL("snowflake").literal(Decimal("1.5"))
+
+    def test_rejects_uuid(self) -> None:
+        with pytest.raises(TypeError, match="convert to str"):
+            SQL("snowflake").literal(UUID("00000000-0000-0000-0000-000000000000"))
+
+    def test_rejects_bytes(self) -> None:
+        with pytest.raises(TypeError, match="convert to str"):
+            SQL("snowflake").literal(b"x")
+
+    def test_rejects_custom_class(self) -> None:
+        class Foo:
+            pass
+
+        with pytest.raises(TypeError):
+            SQL("snowflake").literal(Foo())
