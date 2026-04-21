@@ -1,6 +1,8 @@
 """Tests for keboola_query_service.sql."""
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from keboola_query_service.sql import SQL, SafeSql
@@ -116,3 +118,56 @@ class TestIdentBigQuery:
         sql = SQL("bigquery")
         with pytest.raises(ValueError, match="NUL"):
             sql.ident("a\x00b")
+
+
+class TestLiteralPrimitives:
+    def test_none_is_null(self) -> None:
+        assert SQL("snowflake").literal(None).sql == "NULL"
+
+    def test_true_is_TRUE(self) -> None:
+        assert SQL("snowflake").literal(True).sql == "TRUE"
+
+    def test_false_is_FALSE(self) -> None:
+        assert SQL("snowflake").literal(False).sql == "FALSE"
+
+    def test_int_zero(self) -> None:
+        assert SQL("snowflake").literal(0).sql == "0"
+
+    def test_int_negative(self) -> None:
+        assert SQL("snowflake").literal(-1).sql == "-1"
+
+    def test_int_large(self) -> None:
+        assert SQL("snowflake").literal(10**100).sql == "1" + "0" * 100
+
+    def test_float_simple(self) -> None:
+        assert SQL("snowflake").literal(1.5).sql == "1.5"
+
+    def test_float_round_trip_lockin(self) -> None:
+        # Regression: do not round — faithful to the IEEE 754 double
+        assert SQL("snowflake").literal(0.1 + 0.2).sql == "0.30000000000000004"
+
+    def test_float_scientific_notation(self) -> None:
+        # repr(1e300) is '1e+300' — accepted by both dialects
+        assert SQL("snowflake").literal(1e300).sql == "1e+300"
+
+    def test_reject_nan(self) -> None:
+        with pytest.raises(ValueError, match="non-finite"):
+            SQL("snowflake").literal(float("nan"))
+
+    def test_reject_positive_infinity(self) -> None:
+        with pytest.raises(ValueError, match="non-finite"):
+            SQL("snowflake").literal(math.inf)
+
+    def test_reject_negative_infinity(self) -> None:
+        with pytest.raises(ValueError, match="non-finite"):
+            SQL("snowflake").literal(-math.inf)
+
+
+class TestLiteralBoolBeforeInt:
+    """Regression: isinstance(True, int) is True — bool must dispatch first."""
+
+    def test_true_is_not_1(self) -> None:
+        assert SQL("snowflake").literal(True).sql == "TRUE"
+
+    def test_false_is_not_0(self) -> None:
+        assert SQL("snowflake").literal(False).sql == "FALSE"

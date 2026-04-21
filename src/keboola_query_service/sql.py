@@ -6,6 +6,7 @@ in connection-docs for the design rationale.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -38,6 +39,41 @@ class SQL:
                 f"Supported: 'snowflake', 'bigquery'"
             )
         self.dialect: Dialect = dialect
+
+    def literal(self, value: object) -> SafeSql:
+        """Escape a Python value into a SQL literal fragment.
+
+        Supported types: None, bool, int, float (finite), str, date,
+        datetime, list/tuple, SafeSql. Unknown types raise TypeError
+        with a message suggesting ``str(value)`` as a workaround for
+        Decimal / UUID / bytes.
+
+        Float note: values are emitted via ``repr()``. ``repr(0.1 + 0.2)``
+        is ``'0.30000000000000004'`` — faithful to the IEEE 754 double.
+        """
+        # Order matters. SafeSql first so pre-escaped fragments pass through.
+        if isinstance(value, SafeSql):
+            return value
+        if value is None:
+            return SafeSql(sql="NULL")
+        # bool must be checked before int — isinstance(True, int) is True.
+        if isinstance(value, bool):
+            return SafeSql(sql="TRUE" if value else "FALSE")
+        if isinstance(value, int):
+            return SafeSql(sql=str(value))
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"Cannot escape non-finite float: {value!r}. "
+                    "Snowflake and BigQuery literals do not support NaN/Infinity."
+                )
+            return SafeSql(sql=repr(value))
+        raise TypeError(
+            f"Cannot escape value of type {type(value).__name__}. "
+            "Supported: None, bool, int, float, str, date, datetime, "
+            "list/tuple, SafeSql. If you have a Decimal/UUID/bytes value, "
+            "convert to str explicitly and pass that."
+        )
 
     def raw(self, s: str) -> SafeSql:
         """Wrap a string as a pre-escaped SafeSql fragment.
