@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Literal
 
 Dialect = Literal["snowflake", "bigquery"]
@@ -77,6 +78,21 @@ class SQL:
             # Both dialects: escape backslash and single quote.
             escaped = value.replace("\\", "\\\\").replace("'", "''")
             return SafeSql(sql="'" + escaped + "'")
+        # datetime.datetime must be checked before datetime.date —
+        # datetime is a subclass of date.
+        if isinstance(value, datetime):
+            iso = value.isoformat(sep=" ")
+            if self.dialect == "snowflake":
+                kind = "TIMESTAMP_TZ" if value.tzinfo is not None else "TIMESTAMP_NTZ"
+                return SafeSql(sql=f"'{iso}'::{kind}")
+            # bigquery
+            kind = "TIMESTAMP" if value.tzinfo is not None else "DATETIME"
+            return SafeSql(sql=f"{kind} '{iso}'")
+        if isinstance(value, date):
+            iso = value.isoformat()
+            if self.dialect == "snowflake":
+                return SafeSql(sql=f"'{iso}'::DATE")
+            return SafeSql(sql=f"DATE '{iso}'")
         raise TypeError(
             f"Cannot escape value of type {type(value).__name__}. "
             "Supported: None, bool, int, float, str, date, datetime, "

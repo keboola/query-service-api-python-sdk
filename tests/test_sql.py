@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
@@ -200,3 +201,51 @@ class TestLiteralStrings:
     def test_reject_nul_in_string(self) -> None:
         with pytest.raises(ValueError, match="NUL"):
             SQL("snowflake").literal("a\x00b")
+
+
+class TestLiteralDates:
+    def test_date_snowflake(self) -> None:
+        assert SQL("snowflake").literal(date(2026, 4, 21)).sql == "'2026-04-21'::DATE"
+
+    def test_date_bigquery(self) -> None:
+        assert SQL("bigquery").literal(date(2026, 4, 21)).sql == "DATE '2026-04-21'"
+
+    def test_naive_datetime_snowflake(self) -> None:
+        dt = datetime(2026, 4, 21, 14, 30, 45, 123456)
+        assert (
+            SQL("snowflake").literal(dt).sql
+            == "'2026-04-21 14:30:45.123456'::TIMESTAMP_NTZ"
+        )
+
+    def test_naive_datetime_bigquery(self) -> None:
+        dt = datetime(2026, 4, 21, 14, 30, 45, 123456)
+        assert (
+            SQL("bigquery").literal(dt).sql
+            == "DATETIME '2026-04-21 14:30:45.123456'"
+        )
+
+    def test_tz_aware_datetime_snowflake(self) -> None:
+        tz = timezone(timedelta(hours=-7))
+        dt = datetime(2026, 4, 21, 14, 30, 45, 123456, tzinfo=tz)
+        assert (
+            SQL("snowflake").literal(dt).sql
+            == "'2026-04-21 14:30:45.123456-07:00'::TIMESTAMP_TZ"
+        )
+
+    def test_tz_aware_datetime_bigquery(self) -> None:
+        tz = timezone(timedelta(hours=-7))
+        dt = datetime(2026, 4, 21, 14, 30, 45, 123456, tzinfo=tz)
+        assert (
+            SQL("bigquery").literal(dt).sql
+            == "TIMESTAMP '2026-04-21 14:30:45.123456-07:00'"
+        )
+
+    def test_datetime_utc(self) -> None:
+        dt = datetime(2026, 4, 21, 14, 30, 0, tzinfo=timezone.utc)
+        # Python formats +00:00 as +00:00 via isoformat
+        assert "+00:00" in SQL("snowflake").literal(dt).sql
+
+    def test_reject_time_alone(self) -> None:
+        # time without a date is not supported — too ambiguous across backends
+        with pytest.raises(TypeError):
+            SQL("snowflake").literal(time(14, 30))
