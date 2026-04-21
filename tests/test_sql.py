@@ -24,3 +24,16 @@ class TestSafeSql:
     def test_str_returns_sql(self) -> None:
         s = SafeSql(sql="RAW")
         assert str(s) == "RAW"
+
+
+class TestRaw:
+    def test_wraps_string_as_safesql(self) -> None:
+        sql = SQL("snowflake")
+        result = sql.raw("CURRENT_TIMESTAMP")
+        assert isinstance(result, SafeSql)
+        assert result.sql == "CURRENT_TIMESTAMP"
+
+    def test_rejects_non_string(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError):
+            sql.raw(123)  # type: ignore[arg-type]

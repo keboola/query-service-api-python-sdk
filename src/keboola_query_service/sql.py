@@ -38,3 +38,14 @@ class SQL:
                 f"Supported: 'snowflake', 'bigquery'"
             )
         self.dialect: Dialect = dialect
+
+    def raw(self, s: str) -> SafeSql:
+        """Wrap a string as a pre-escaped SafeSql fragment.
+
+        Escape hatch for injecting SQL the helper doesn't directly support
+        (e.g., ``CURRENT_TIMESTAMP``, backend-specific function calls).
+        Use only with strings you fully control — never user input.
+        """
+        if not isinstance(s, str):
+            raise TypeError(f"raw() requires str, got: {type(s).__name__}")
+        return SafeSql(sql=s)
