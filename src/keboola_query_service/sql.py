@@ -93,6 +93,17 @@ class SQL:
             if self.dialect == "snowflake":
                 return SafeSql(sql=f"'{iso}'::DATE")
             return SafeSql(sql=f"DATE '{iso}'")
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return SafeSql(sql="(NULL)")
+            parts: list[str] = []
+            for elem in value:
+                if isinstance(elem, (list, tuple)):
+                    raise TypeError(
+                        "Nested lists/tuples are not supported in SQL literals"
+                    )
+                parts.append(self.literal(elem).sql)
+            return SafeSql(sql="(" + ", ".join(parts) + ")")
         raise TypeError(
             f"Cannot escape value of type {type(value).__name__}. "
             "Supported: None, bool, int, float, str, date, datetime, "

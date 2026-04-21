@@ -249,3 +249,28 @@ class TestLiteralDates:
         # time without a date is not supported — too ambiguous across backends
         with pytest.raises(TypeError):
             SQL("snowflake").literal(time(14, 30))
+
+
+class TestLiteralLists:
+    def test_non_empty_list(self) -> None:
+        assert SQL("snowflake").literal([1, 2, 3]).sql == "(1, 2, 3)"
+
+    def test_mixed_types(self) -> None:
+        assert (
+            SQL("snowflake").literal([1, "a", None, True]).sql
+            == "(1, 'a', NULL, TRUE)"
+        )
+
+    def test_tuple_works_like_list(self) -> None:
+        assert SQL("snowflake").literal((1, 2, 3)).sql == "(1, 2, 3)"
+
+    def test_empty_list_is_NULL_tuple(self) -> None:
+        # IN () is a syntax error; IN (NULL) returns no rows, matching empty-set.
+        assert SQL("snowflake").literal([]).sql == "(NULL)"
+
+    def test_empty_tuple_is_NULL_tuple(self) -> None:
+        assert SQL("snowflake").literal(()).sql == "(NULL)"
+
+    def test_nested_list_raises(self) -> None:
+        with pytest.raises(TypeError, match="Nested"):
+            SQL("snowflake").literal([1, [2, 3]])
