@@ -83,3 +83,36 @@ class TestIdentSnowflake:
         sql = SQL("snowflake")
         with pytest.raises(ValueError, match="not permitted"):
             sql.ident("a\x00b")
+
+
+class TestIdentBigQuery:
+    def test_single_part_uses_backticks(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.ident("status").sql == "`status`"
+
+    def test_multi_part(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.ident("project.dataset", "table").sql == "`project.dataset`.`table`"
+
+    def test_escapes_backtick(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.ident("a`b").sql == "`a\\`b`"
+
+    def test_escapes_backslash(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.ident("a\\b").sql == "`a\\\\b`"
+
+    def test_rejects_newline(self) -> None:
+        sql = SQL("bigquery")
+        with pytest.raises(ValueError, match="newline"):
+            sql.ident("a\nb")
+
+    def test_rejects_carriage_return(self) -> None:
+        sql = SQL("bigquery")
+        with pytest.raises(ValueError, match="carriage return"):
+            sql.ident("a\rb")
+
+    def test_rejects_nul(self) -> None:
+        sql = SQL("bigquery")
+        with pytest.raises(ValueError, match="NUL"):
+            sql.ident("a\x00b")
