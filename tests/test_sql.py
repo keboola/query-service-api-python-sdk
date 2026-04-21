@@ -310,3 +310,33 @@ class TestLiteralUnknownTypes:
 
         with pytest.raises(TypeError):
             SQL("snowflake").literal(Foo())
+
+
+class TestDate:
+    def test_date_from_date_object(self) -> None:
+        assert (
+            SQL("snowflake").date(date(2026, 4, 21)).sql == "'2026-04-21'::DATE"
+        )
+
+    def test_date_from_string(self) -> None:
+        assert SQL("snowflake").date("2026-04-21").sql == "'2026-04-21'::DATE"
+
+    def test_date_bigquery(self) -> None:
+        assert SQL("bigquery").date("2026-04-21").sql == "DATE '2026-04-21'"
+
+    def test_rejects_malformed_string(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError):
+            sql.date("2026/04/21")
+        with pytest.raises(ValueError):
+            sql.date("not-a-date")
+
+    def test_rejects_datetime_requires_explicit_date(self) -> None:
+        # Callers with a datetime should pass .date() themselves
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError):
+            sql.date(datetime(2026, 4, 21, 12, 0))  # type: ignore[arg-type]
+
+    def test_rejects_non_date_non_string(self) -> None:
+        with pytest.raises(TypeError):
+            SQL("snowflake").date(42)  # type: ignore[arg-type]
