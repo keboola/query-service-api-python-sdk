@@ -37,3 +37,49 @@ class TestRaw:
         sql = SQL("snowflake")
         with pytest.raises(TypeError):
             sql.raw(123)  # type: ignore[arg-type]
+
+
+class TestIdentSnowflake:
+    def test_single_part(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.ident("status").sql == '"status"'
+
+    def test_multi_part_preserves_dots(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.ident("in.c-main", "customers").sql == '"in.c-main"."customers"'
+
+    def test_three_parts(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.ident("in.c-main", "customers", "id").sql
+            == '"in.c-main"."customers"."id"'
+        )
+
+    def test_doubles_internal_double_quote(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.ident('a"b').sql == '"a""b"'
+
+    def test_allows_unicode_and_spaces(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.ident("my table").sql == '"my table"'
+        assert sql.ident("café").sql == '"café"'
+
+    def test_rejects_zero_parts(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="at least one part"):
+            sql.ident()
+
+    def test_rejects_empty_string_part(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="non-empty string"):
+            sql.ident("")
+
+    def test_rejects_non_string_part(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError):
+            sql.ident(42)  # type: ignore[arg-type]
+
+    def test_rejects_nul(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="not permitted"):
+            sql.ident("a\x00b")

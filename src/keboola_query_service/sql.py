@@ -49,3 +49,49 @@ class SQL:
         if not isinstance(s, str):
             raise TypeError(f"raw() requires str, got: {type(s).__name__}")
         return SafeSql(sql=s)
+
+    def ident(self, *parts: str) -> SafeSql:
+        """Quote one or more identifier parts and join with dots.
+
+        Dots inside a part are preserved (never split). Each part is
+        quoted and escaped per the active dialect:
+
+        - Snowflake: wrap in ``"``, double internal ``"``, reject ``\\0``.
+        - BigQuery:  wrap in `` ` ``, prefix internal `` ` `` and ``\\``
+          with ``\\``, reject ``\\0``, ``\\n``, ``\\r``.
+        """
+        if not parts:
+            raise ValueError("ident() requires at least one part")
+        escaped = [self._quote_ident_part(p) for p in parts]
+        return SafeSql(sql=".".join(escaped))
+
+    def _quote_ident_part(self, part: object) -> str:
+        if not isinstance(part, str):
+            raise TypeError(
+                f"ident() part must be a non-empty string, got: {part!r}"
+            )
+        if part == "":
+            raise ValueError(
+                f"ident() part must be a non-empty string, got: {part!r}"
+            )
+        if self.dialect == "snowflake":
+            if "\x00" in part:
+                raise ValueError(
+                    "ident() part contains NUL, which is not permitted in "
+                    "snowflake identifiers"
+                )
+            return '"' + part.replace('"', '""') + '"'
+        # bigquery
+        bad_chars = (
+            ("\x00", "NUL"),
+            ("\n", "newline"),
+            ("\r", "carriage return"),
+        )
+        for bad, name in bad_chars:
+            if bad in part:
+                raise ValueError(
+                    f"ident() part contains {name}, which is not permitted "
+                    f"in bigquery identifiers"
+                )
+        escaped = part.replace("\\", "\\\\").replace("`", "\\`")
+        return "`" + escaped + "`"
