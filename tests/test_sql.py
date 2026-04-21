@@ -340,3 +340,74 @@ class TestDate:
     def test_rejects_non_date_non_string(self) -> None:
         with pytest.raises(TypeError):
             SQL("snowflake").date(42)  # type: ignore[arg-type]
+
+
+class TestFormat:
+    def test_single_named_placeholder_escapes_value(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.format("SET x = {v}", v="O'Brien") == "SET x = 'O''Brien'"
+
+    def test_multiple_named_placeholders(self) -> None:
+        sql = SQL("snowflake")
+        result = sql.format(
+            "SET a = {a}, b = {b}, c = {c}",
+            a=1, b="two", c=None,
+        )
+        assert result == "SET a = 1, b = 'two', c = NULL"
+
+    def test_safesql_value_passes_through(self) -> None:
+        sql = SQL("snowflake")
+        result = sql.format(
+            "UPDATE {t} SET x = {x}",
+            t=sql.ident("in.c-main", "approvals"),
+            x="o'brien",
+        )
+        assert (
+            result
+            == "UPDATE \"in.c-main\".\"approvals\" SET x = 'o''brien'"
+        )
+
+    def test_attribute_reference_still_escapes(self) -> None:
+        sql = SQL("snowflake")
+        class Obj:
+            name = "o'brien"
+        assert sql.format("x = {obj.name}", obj=Obj()) == "x = 'o''brien'"
+
+    def test_index_reference_still_escapes(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.format("x = {xs[0]}", xs=["o'brien"]) == "x = 'o''brien'"
+
+    def test_positional_placeholder_raises(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(IndexError):
+            sql.format("x = {0}", "one")  # type: ignore[misc]
+
+    def test_format_spec_raises(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="Format spec"):
+            sql.format("price = {p:.2f}", p=1.2345)
+
+    def test_unknown_named_placeholder_raises(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(KeyError):
+            sql.format("SET x = {y}", a=1)
+
+    def test_literal_braces(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.format("WHERE j = '{{\"k\": {v}}}'", v=1) == "WHERE j = '{\"k\": 1}'"
+
+    def test_end_to_end_docs_example(self) -> None:
+        sql = SQL("snowflake")
+        q = sql.format(
+            "UPDATE {t} SET status = {status}, updated_at = {ts} WHERE id = {id}",
+            t=sql.ident("in.c-main", "approvals"),
+            status="approved",
+            ts=sql.raw("CURRENT_TIMESTAMP"),
+            id=123,
+        )
+        assert (
+            q
+            == "UPDATE \"in.c-main\".\"approvals\" "
+            "SET status = 'approved', updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = 123"
+        )
