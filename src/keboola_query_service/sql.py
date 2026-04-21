@@ -68,6 +68,15 @@ class SQL:
                     "Snowflake and BigQuery literals do not support NaN/Infinity."
                 )
             return SafeSql(sql=repr(value))
+        if isinstance(value, str):
+            if "\x00" in value:
+                raise ValueError(
+                    "String literal contains NUL character, which neither "
+                    "Snowflake nor BigQuery accept"
+                )
+            # Both dialects: escape backslash and single quote.
+            escaped = value.replace("\\", "\\\\").replace("'", "''")
+            return SafeSql(sql="'" + escaped + "'")
         raise TypeError(
             f"Cannot escape value of type {type(value).__name__}. "
             "Supported: None, bool, int, float, str, date, datetime, "

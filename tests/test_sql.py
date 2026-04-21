@@ -171,3 +171,32 @@ class TestLiteralBoolBeforeInt:
 
     def test_false_is_not_0(self) -> None:
         assert SQL("snowflake").literal(False).sql == "FALSE"
+
+
+class TestLiteralStrings:
+    def test_empty_string(self) -> None:
+        assert SQL("snowflake").literal("").sql == "''"
+
+    def test_simple_string(self) -> None:
+        assert SQL("snowflake").literal("hello").sql == "'hello'"
+
+    def test_doubles_internal_single_quote(self) -> None:
+        assert SQL("snowflake").literal("O'Brien").sql == "'O''Brien'"
+
+    def test_snowflake_escapes_backslash(self) -> None:
+        # Regression: Snowflake interprets \n as newline in string literals.
+        # Python string "a\\nb" is 4 chars: a, \, n, b. We must emit
+        # 'a\\nb' so Snowflake parses back to the same 4 chars.
+        assert SQL("snowflake").literal("a\\nb").sql == "'a\\\\nb'"
+
+    def test_bigquery_escapes_backslash(self) -> None:
+        assert SQL("bigquery").literal("a\\nb").sql == "'a\\\\nb'"
+
+    def test_literal_newline_preserved(self) -> None:
+        # Actual newline (LF) byte, not the two-char \n escape —
+        # passes through inside the quotes unchanged.
+        assert SQL("snowflake").literal("a\nb").sql == "'a\nb'"
+
+    def test_reject_nul_in_string(self) -> None:
+        with pytest.raises(ValueError, match="NUL"):
+            SQL("snowflake").literal("a\x00b")
