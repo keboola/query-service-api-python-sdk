@@ -411,3 +411,18 @@ class TestFormat:
             "SET status = 'approved', updated_at = CURRENT_TIMESTAMP "
             "WHERE id = 123"
         )
+
+
+class TestPackageExports:
+    def test_sql_importable_from_package(self) -> None:
+        from keboola_query_service import SQL as PackageSQL  # noqa: N811
+
+        assert PackageSQL is SQL
+
+    def test_safesql_importable_from_package(self) -> None:
+        from keboola_query_service import SafeSql as PackageSafeSql
+
+        assert PackageSafeSql is SafeSql
+
+    def test_dialect_importable_from_package(self) -> None:
+        from keboola_query_service import Dialect  # noqa: F401
