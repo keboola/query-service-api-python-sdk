@@ -1,7 +1,7 @@
 """Tests for keboola_query_service.sql."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 
 import pytest
@@ -468,3 +468,31 @@ class TestLiteralDate:
         sql = SQL("snowflake")
         with pytest.raises(TypeError, match="DATE"):
             sql.literal(20260421, type="DATE")
+
+
+class TestLiteralTime:
+    def test_time_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.literal(time(12, 34, 56), type="TIME").sql == "'12:34:56'::TIME"
+        )
+
+    def test_time_microseconds(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.literal(time(12, 34, 56, 789000), type="TIME").sql
+            == "'12:34:56.789000'::TIME"
+        )
+
+    def test_time_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(time(12, 34, 56), type="TIME").sql == "TIME '12:34:56'"
+
+    def test_string(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("12:34:56", type="TIME").sql == "'12:34:56'::TIME"
+
+    def test_malformed_string(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="TIME"):
+            sql.literal("not-a-time", type="TIME")

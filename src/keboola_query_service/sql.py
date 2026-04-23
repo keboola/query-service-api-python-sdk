@@ -11,7 +11,7 @@ import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal
 
@@ -172,6 +172,31 @@ def _emit_date_bigquery(value: object) -> str:
     return f"DATE '{_coerce_date(value, 'DATE')}'"
 
 
+def _coerce_time(value: object, type_label: str) -> str:
+    if isinstance(value, time):
+        return value.isoformat()
+    if isinstance(value, str):
+        try:
+            return time.fromisoformat(value).isoformat()
+        except ValueError as e:
+            raise ValueError(
+                f"literal(type={type_label!r}) expects 'HH:MM:SS[.ffffff]', "
+                f"got: {value!r}"
+            ) from e
+    raise TypeError(
+        f"literal(type={type_label!r}) expects datetime.time or string, "
+        f"got {type(value).__name__}: {value!r}"
+    )
+
+
+def _emit_time_snowflake(value: object) -> str:
+    return f"'{_coerce_time(value, 'TIME')}'::TIME"
+
+
+def _emit_time_bigquery(value: object) -> str:
+    return f"TIME '{_coerce_time(value, 'TIME')}'"
+
+
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
     "INT": (
@@ -187,6 +212,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     ),
     "BOOLEAN": ((), "bool", _emit_boolean),
     "DATE": ((), "date|str", _emit_date_snowflake),
+    "TIME": ((), "time|str", _emit_time_snowflake),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -201,6 +227,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "FLOAT64": (("FLOAT",), "int|float", _emit_float),
     "BOOL": (("BOOLEAN",), "bool", _emit_boolean),
     "DATE": ((), "date|str", _emit_date_bigquery),
+    "TIME": ((), "time|str", _emit_time_bigquery),
 }
 
 
