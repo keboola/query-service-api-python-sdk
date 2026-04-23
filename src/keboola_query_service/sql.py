@@ -7,7 +7,6 @@ in connection-docs for the design rationale.
 from __future__ import annotations
 
 import math
-import string
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
@@ -31,27 +30,6 @@ class SafeSql:
         return self.sql
 
 
-class _SafeFormatter(string.Formatter):
-    """Formatter that routes each interpolated value through SQL.literal().
-
-    Rejects non-empty format_spec (e.g., ``{p:.2f}``) with ValueError.
-    SafeSql values are passed through unchanged.
-    """
-
-    def __init__(self, sql: SQL) -> None:
-        self._sql = sql
-
-    def format_field(self, value: object, format_spec: str) -> str:
-        if format_spec:
-            raise ValueError(
-                f"Format spec {format_spec!r} is not supported in sql.format(). "
-                "Pre-format the value (e.g., round() or strftime()) before passing."
-            )
-        if isinstance(value, SafeSql):
-            return value.sql
-        return self._sql.literal(value).sql
-
-
 class SQL:
     """Dialect-bound SQL escape helper."""
 
@@ -62,18 +40,6 @@ class SQL:
                 f"Supported: 'snowflake', 'bigquery'"
             )
         self.dialect: Dialect = dialect
-
-    def format(self, template: str, *_args: object, **values: object) -> str:
-        """Interpolate ``{name}`` placeholders in ``template`` safely.
-
-        Each resolved value is routed through ``SafeSql`` passthrough +
-        ``literal()``. Only named placeholders are supported in v1;
-        ``{0}`` / ``{}`` raise ``IndexError`` (empty positional tuple is
-        always passed to the underlying formatter). Non-empty format
-        specs (``{p:.2f}``) raise ``ValueError``. Standard brace escapes
-        (``{{``, ``}}``) apply.
-        """
-        return _SafeFormatter(self).vformat(template, (), values)
 
     def literal(self, value: object) -> SafeSql:
         """Escape a Python value into a SQL literal fragment.
