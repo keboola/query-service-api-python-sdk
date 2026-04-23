@@ -7,8 +7,10 @@ design rationale.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 Dialect = Literal["snowflake", "bigquery"]
@@ -66,6 +68,49 @@ def _emit_int_bigquery(value: object) -> str:
     return str(value)
 
 
+_NUMERIC_STRING_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _coerce_decimal_string(value: object, type_label: str) -> str:
+    if isinstance(value, bool):
+        raise TypeError(
+            f"literal(type={type_label!r}) expects int/Decimal/str (not bool), "
+            f"got bool: {value!r}"
+        )
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError(
+                f"Cannot escape non-finite Decimal: {value!r}. "
+                f"NUMBER/NUMERIC literals do not support NaN/Infinity."
+            )
+        return str(value)
+    if isinstance(value, str):
+        if not _NUMERIC_STRING_RE.match(value):
+            raise ValueError(
+                f"literal(type={type_label!r}) string must match "
+                f"[-]?\\d+(\\.\\d+)?, got: {value!r}"
+            )
+        return value
+    raise TypeError(
+        f"literal(type={type_label!r}) expects int, Decimal, or str, "
+        f"got {type(value).__name__}: {value!r}"
+    )
+
+
+def _emit_number_snowflake(value: object) -> str:
+    return _coerce_decimal_string(value, "NUMBER")
+
+
+def _emit_numeric_bigquery(value: object) -> str:
+    return f"NUMERIC '{_coerce_decimal_string(value, 'NUMERIC')}'"
+
+
+def _emit_bignumeric_bigquery(value: object) -> str:
+    return f"BIGNUMERIC '{_coerce_decimal_string(value, 'BIGNUMERIC')}'"
+
+
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
     "INT": (
@@ -73,6 +118,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
         "int",
         _emit_int_snowflake,
     ),
+    "NUMBER": (("NUMERIC", "DECIMAL"), "int|Decimal|str", _emit_number_snowflake),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -82,6 +128,8 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
         "int",
         _emit_int_bigquery,
     ),
+    "NUMERIC": (("DECIMAL",), "int|Decimal|str", _emit_numeric_bigquery),
+    "BIGNUMERIC": (("BIGDECIMAL",), "int|Decimal|str", _emit_bignumeric_bigquery),
 }
 
 

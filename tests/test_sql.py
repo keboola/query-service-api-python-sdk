@@ -1,6 +1,8 @@
 """Tests for keboola_query_service.sql."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from keboola_query_service.sql import SQL, SafeSql
@@ -269,3 +271,70 @@ class TestLiteralInt64BigQuery:
         sql = SQL("bigquery")
         with pytest.raises(TypeError, match="INT64"):
             sql.literal(True, type="INT64")
+
+
+class TestLiteralNumberSnowflake:
+    def test_int_input(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(42, type="NUMBER").sql == "42"
+
+    def test_decimal_input(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(Decimal("3.14"), type="NUMBER").sql == "3.14"
+
+    def test_string_input_valid(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("123.45", type="NUMBER").sql == "123.45"
+
+    def test_string_negative(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("-0.5", type="NUMBER").sql == "-0.5"
+
+    def test_string_invalid(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="NUMBER"):
+            sql.literal("abc", type="NUMBER")
+
+    def test_rejects_nan(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="non-finite"):
+            sql.literal(Decimal("NaN"), type="NUMBER")
+
+    def test_rejects_infinity(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="non-finite"):
+            sql.literal(Decimal("Infinity"), type="NUMBER")
+
+    def test_rejects_float(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="NUMBER"):
+            sql.literal(3.14, type="NUMBER")
+
+    @pytest.mark.parametrize("alias", ["NUMERIC", "DECIMAL"])
+    def test_aliases_snowflake(self, alias: str) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(1, type=alias).sql == "1"
+
+
+class TestLiteralNumericBigQuery:
+    def test_int_input(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(42, type="NUMERIC").sql == "NUMERIC '42'"
+
+    def test_decimal_input(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(Decimal("3.14"), type="NUMERIC").sql == "NUMERIC '3.14'"
+
+    def test_decimal_alias(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(1, type="DECIMAL").sql == "NUMERIC '1'"
+
+    def test_bignumeric(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(Decimal("9" * 40), type="BIGNUMERIC").sql == (
+            "BIGNUMERIC '" + "9" * 40 + "'"
+        )
+
+    def test_bigdecimal_alias(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(1, type="BIGDECIMAL").sql == "BIGNUMERIC '1'"
