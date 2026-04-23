@@ -535,3 +535,41 @@ class TestLiteralTimestampNtz:
         dt = datetime(2026, 4, 21, tzinfo=timezone.utc)
         with pytest.raises(TypeError, match="naive"):
             sql.literal(dt, type="TIMESTAMP_NTZ")
+
+
+class TestLiteralTimestampTz:
+    def test_tz_aware_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        dt = datetime(2026, 4, 21, 12, 34, 56, tzinfo=timezone.utc)
+        assert (
+            sql.literal(dt, type="TIMESTAMP_TZ").sql
+            == "'2026-04-21 12:34:56+00:00'::TIMESTAMP_TZ"
+        )
+
+    def test_ltz_alias_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        dt = datetime(2026, 4, 21, 12, 34, 56, tzinfo=timezone.utc)
+        assert (
+            sql.literal(dt, type="TIMESTAMP_LTZ").sql
+            == "'2026-04-21 12:34:56+00:00'::TIMESTAMP_TZ"
+        )
+
+    def test_bigquery_timestamp(self) -> None:
+        sql = SQL("bigquery")
+        dt = datetime(2026, 4, 21, 12, 34, 56, tzinfo=timezone.utc)
+        assert (
+            sql.literal(dt, type="TIMESTAMP").sql
+            == "TIMESTAMP '2026-04-21 12:34:56+00:00'"
+        )
+
+    def test_rejects_naive(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="tz-aware"):
+            sql.literal(datetime(2026, 4, 21), type="TIMESTAMP_TZ")
+
+
+class TestSnowflakeBareTimestampRejected:
+    def test_bare_timestamp_raises(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="ambiguous"):
+            sql.literal("anything", type="TIMESTAMP")

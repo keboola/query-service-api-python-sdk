@@ -232,6 +232,43 @@ def _emit_datetime_bigquery(value: object) -> str:
     return f"DATETIME '{_coerce_naive_datetime(value, 'DATETIME')}'"
 
 
+def _coerce_tz_aware_datetime(value: object, type_label: str) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise TypeError(
+                f"literal(type={type_label!r}) expects tz-aware datetime, got naive"
+            )
+        return value.isoformat(sep=" ")
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as e:
+            raise ValueError(
+                f"literal(type={type_label!r}) expects ISO datetime string with "
+                f"offset, got: {value!r}"
+            ) from e
+        if parsed.tzinfo is None:
+            raise ValueError(
+                f"literal(type={type_label!r}) expects tz-aware datetime string, "
+                f"got naive: {value!r}"
+            )
+        return parsed.isoformat(sep=" ")
+    raise TypeError(
+        f"literal(type={type_label!r}) expects tz-aware datetime or string, "
+        f"got {type(value).__name__}: {value!r}"
+    )
+
+
+def _emit_timestamp_tz_snowflake(value: object) -> str:
+    return f"'{_coerce_tz_aware_datetime(value, 'TIMESTAMP_TZ')}'::TIMESTAMP_TZ"
+
+
+def _emit_timestamp_bigquery(value: object) -> str:
+    return f"TIMESTAMP '{_coerce_tz_aware_datetime(value, 'TIMESTAMP')}'"
+
+
+_SNOWFLAKE_AMBIGUOUS: set[str] = {"TIMESTAMP"}
+
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
     "INT": (
@@ -249,6 +286,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "DATE": ((), "date|str", _emit_date_snowflake),
     "TIME": ((), "time|str", _emit_time_snowflake),
     "TIMESTAMP_NTZ": (("DATETIME",), "datetime|str", _emit_timestamp_ntz_snowflake),
+    "TIMESTAMP_TZ": (("TIMESTAMP_LTZ",), "datetime|str", _emit_timestamp_tz_snowflake),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -265,6 +303,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "DATE": ((), "date|str", _emit_date_bigquery),
     "TIME": ((), "time|str", _emit_time_bigquery),
     "DATETIME": ((), "datetime|str", _emit_datetime_bigquery),
+    "TIMESTAMP": ((), "datetime|str", _emit_timestamp_bigquery),
 }
 
 
@@ -314,6 +353,12 @@ class SQL:
 
     def _resolve_type(self, type_name: str) -> str:
         key = type_name.upper()
+        if self.dialect == "snowflake" and key in _SNOWFLAKE_AMBIGUOUS:
+            raise ValueError(
+                "Bare 'TIMESTAMP' is ambiguous on Snowflake (depends on session "
+                "TIMESTAMP_TYPE_MAPPING). Use TIMESTAMP_NTZ, TIMESTAMP_TZ, or "
+                "TIMESTAMP_LTZ explicitly."
+            )
         if key not in self._alias_index:
             supported = ", ".join(sorted(self._types.keys()))
             raise ValueError(
