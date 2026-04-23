@@ -1,6 +1,7 @@
 """Tests for keboola_query_service.sql."""
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -438,3 +439,32 @@ class TestLiteralBoolean:
         sql = SQL("snowflake")
         with pytest.raises(TypeError, match="BOOLEAN"):
             sql.literal("true", type="BOOLEAN")
+
+
+class TestLiteralDate:
+    def test_date_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(date(2026, 4, 21), type="DATE").sql == "'2026-04-21'::DATE"
+
+    def test_date_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(date(2026, 4, 21), type="DATE").sql == "DATE '2026-04-21'"
+
+    def test_string_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("2026-04-21", type="DATE").sql == "'2026-04-21'::DATE"
+
+    def test_malformed_string(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="DATE"):
+            sql.literal("26-04-21", type="DATE")
+
+    def test_rejects_datetime(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="DATE"):
+            sql.literal(datetime(2026, 4, 21, 12, 0), type="DATE")
+
+    def test_rejects_int(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="DATE"):
+            sql.literal(20260421, type="DATE")

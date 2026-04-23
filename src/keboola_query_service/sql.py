@@ -11,6 +11,7 @@ import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -142,6 +143,35 @@ def _emit_boolean(value: object) -> str:
     return "TRUE" if value else "FALSE"
 
 
+def _coerce_date(value: object, type_label: str) -> str:
+    if isinstance(value, datetime):
+        raise TypeError(
+            f"literal(type={type_label!r}) expects datetime.date (not datetime). "
+            f"If you have a datetime, pass value.date()."
+        )
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError as e:
+            raise ValueError(
+                f"literal(type={type_label!r}) expects 'YYYY-MM-DD', got: {value!r}"
+            ) from e
+    raise TypeError(
+        f"literal(type={type_label!r}) expects datetime.date or 'YYYY-MM-DD', "
+        f"got {type(value).__name__}: {value!r}"
+    )
+
+
+def _emit_date_snowflake(value: object) -> str:
+    return f"'{_coerce_date(value, 'DATE')}'::DATE"
+
+
+def _emit_date_bigquery(value: object) -> str:
+    return f"DATE '{_coerce_date(value, 'DATE')}'"
+
+
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
     "INT": (
@@ -156,6 +186,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
         _emit_float,
     ),
     "BOOLEAN": ((), "bool", _emit_boolean),
+    "DATE": ((), "date|str", _emit_date_snowflake),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -169,6 +200,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "BIGNUMERIC": (("BIGDECIMAL",), "int|Decimal|str", _emit_bignumeric_bigquery),
     "FLOAT64": (("FLOAT",), "int|float", _emit_float),
     "BOOL": (("BOOLEAN",), "bool", _emit_boolean),
+    "DATE": ((), "date|str", _emit_date_bigquery),
 }
 
 
