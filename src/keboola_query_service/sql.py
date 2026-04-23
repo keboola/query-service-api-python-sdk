@@ -267,6 +267,36 @@ def _emit_timestamp_bigquery(value: object) -> str:
     return f"TIMESTAMP '{_coerce_tz_aware_datetime(value, 'TIMESTAMP')}'"
 
 
+_HEX_RE = re.compile(r"^[0-9a-fA-F]*$")
+
+
+def _coerce_bytes(value: object, type_label: str) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        if len(value) % 2 != 0 or not _HEX_RE.match(value):
+            raise ValueError(
+                f"literal(type={type_label!r}) hex string must be "
+                f"[0-9a-fA-F]*, even length, got: {value!r}"
+            )
+        return bytes.fromhex(value)
+    raise TypeError(
+        f"literal(type={type_label!r}) expects bytes or hex str, "
+        f"got {type(value).__name__}: {value!r}"
+    )
+
+
+def _emit_binary_snowflake(value: object) -> str:
+    data = _coerce_bytes(value, "BINARY")
+    return f"'{data.hex()}'::BINARY"
+
+
+def _emit_bytes_bigquery(value: object) -> str:
+    data = _coerce_bytes(value, "BYTES")
+    escaped = "".join(f"\\x{b:02x}" for b in data)
+    return f"b'{escaped}'"
+
+
 _SNOWFLAKE_AMBIGUOUS: set[str] = {"TIMESTAMP"}
 
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
@@ -287,6 +317,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "TIME": ((), "time|str", _emit_time_snowflake),
     "TIMESTAMP_NTZ": (("DATETIME",), "datetime|str", _emit_timestamp_ntz_snowflake),
     "TIMESTAMP_TZ": (("TIMESTAMP_LTZ",), "datetime|str", _emit_timestamp_tz_snowflake),
+    "BINARY": (("VARBINARY",), "bytes|hex str", _emit_binary_snowflake),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -304,6 +335,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "TIME": ((), "time|str", _emit_time_bigquery),
     "DATETIME": ((), "datetime|str", _emit_datetime_bigquery),
     "TIMESTAMP": ((), "datetime|str", _emit_timestamp_bigquery),
+    "BYTES": ((), "bytes|hex str", _emit_bytes_bigquery),
 }
 
 

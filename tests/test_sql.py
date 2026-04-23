@@ -573,3 +573,45 @@ class TestSnowflakeBareTimestampRejected:
         sql = SQL("snowflake")
         with pytest.raises(ValueError, match="ambiguous"):
             sql.literal("anything", type="TIMESTAMP")
+
+
+class TestLiteralBinary:
+    def test_bytes_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.literal(b"\xde\xad\xbe\xef", type="BINARY").sql
+            == "'deadbeef'::BINARY"
+        )
+
+    def test_hex_string_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.literal("DEADBEEF", type="BINARY").sql == "'deadbeef'::BINARY"
+        )
+
+    def test_varbinary_alias(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.literal(b"\x01", type="VARBINARY").sql == "'01'::BINARY"
+        )
+
+    def test_odd_length_hex_rejected(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="hex"):
+            sql.literal("ABC", type="BINARY")
+
+    def test_non_hex_rejected(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="hex"):
+            sql.literal("nothex!", type="BINARY")
+
+    def test_bytes_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        assert (
+            sql.literal(b"\xde\xad", type="BYTES").sql
+            == "b'\\xde\\xad'"
+        )
+
+    def test_hex_string_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal("dead", type="BYTES").sql == "b'\\xde\\xad'"
