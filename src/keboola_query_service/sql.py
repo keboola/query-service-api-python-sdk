@@ -7,6 +7,7 @@ design rationale.
 """
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -111,6 +112,27 @@ def _emit_bignumeric_bigquery(value: object) -> str:
     return f"BIGNUMERIC '{_coerce_decimal_string(value, 'BIGNUMERIC')}'"
 
 
+def _emit_float(value: object) -> str:
+    if isinstance(value, bool):
+        raise TypeError(
+            f"literal(type='FLOAT') expects int/float (not bool), "
+            f"got bool: {value!r}"
+        )
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(
+                f"Cannot escape non-finite float: {value!r}. "
+                f"Snowflake and BigQuery literals do not support NaN/Infinity."
+            )
+        return repr(value)
+    raise TypeError(
+        f"literal(type='FLOAT') expects int or float, "
+        f"got {type(value).__name__}: {value!r}"
+    )
+
+
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
     "INT": (
@@ -119,6 +141,11 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
         _emit_int_snowflake,
     ),
     "NUMBER": (("NUMERIC", "DECIMAL"), "int|Decimal|str", _emit_number_snowflake),
+    "FLOAT": (
+        ("FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL"),
+        "int|float",
+        _emit_float,
+    ),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -130,6 +157,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     ),
     "NUMERIC": (("DECIMAL",), "int|Decimal|str", _emit_numeric_bigquery),
     "BIGNUMERIC": (("BIGDECIMAL",), "int|Decimal|str", _emit_bignumeric_bigquery),
+    "FLOAT64": (("FLOAT",), "int|float", _emit_float),
 }
 
 

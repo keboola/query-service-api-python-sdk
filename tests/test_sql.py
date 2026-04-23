@@ -354,3 +354,54 @@ class TestLiteralNumericBigQuery:
             sql.literal(Decimal("1E+10"), type="NUMERIC").sql
             == "NUMERIC '10000000000'"
         )
+
+
+class TestLiteralFloatSnowflake:
+    def test_float_value(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(1.5, type="FLOAT").sql == "1.5"
+
+    def test_int_value(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(7, type="FLOAT").sql == "7"
+
+    def test_precision_locked_in(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(0.1 + 0.2, type="FLOAT").sql == "0.30000000000000004"
+
+    def test_scientific_notation(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(1e300, type="FLOAT").sql == "1e+300"
+
+    def test_rejects_nan(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="non-finite"):
+            sql.literal(float("nan"), type="FLOAT")
+
+    def test_rejects_infinity(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="non-finite"):
+            sql.literal(float("inf"), type="FLOAT")
+
+    def test_rejects_bool(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="FLOAT"):
+            sql.literal(True, type="FLOAT")
+
+    @pytest.mark.parametrize(
+        "alias",
+        ["FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL"],
+    )
+    def test_aliases(self, alias: str) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(1.5, type=alias).sql == "1.5"
+
+
+class TestLiteralFloat64BigQuery:
+    def test_float_value(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(1.5, type="FLOAT64").sql == "1.5"
+
+    def test_float_alias(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(1.5, type="FLOAT").sql == "1.5"
