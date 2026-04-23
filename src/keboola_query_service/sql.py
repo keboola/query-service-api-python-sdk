@@ -21,7 +21,7 @@ class SafeSql:
     """Trust marker for already-escaped SQL fragments.
 
     Do not construct directly for user input — use ``SQL.literal()``,
-    ``SQL.ident()``, ``SQL.date()``, or ``SQL.raw()``.
+    ``SQL.ident()``, or ``SQL.raw()``.
     """
 
     sql: str
@@ -110,38 +110,6 @@ class SQL:
             "list/tuple, SafeSql. If you have a Decimal/UUID/bytes value, "
             "convert to str explicitly and pass that."
         )
-
-    def date(self, value: date | str) -> SafeSql:
-        """Emit a DATE literal explicitly.
-
-        Accepts ``datetime.date`` or a ``"YYYY-MM-DD"`` string. Rejects
-        ``datetime.datetime`` (callers should pass ``dt.date()``).
-        """
-        if isinstance(value, datetime):
-            # Reject before the date branch below — datetime is-a date.
-            raise TypeError(
-                "date() expects datetime.date or a 'YYYY-MM-DD' string. "
-                "If you have a datetime, pass value.date()."
-            )
-        if isinstance(value, date):
-            d = value
-        elif isinstance(value, str):
-            try:
-                d = date.fromisoformat(value)
-            except ValueError as e:
-                raise ValueError(
-                    f"date() expects datetime.date or a 'YYYY-MM-DD' string, "
-                    f"got: {value!r}"
-                ) from e
-        else:
-            raise TypeError(
-                f"date() expects datetime.date or a 'YYYY-MM-DD' string, "
-                f"got: {value!r}"
-            )
-        iso = d.isoformat()
-        if self.dialect == "snowflake":
-            return SafeSql(sql=f"'{iso}'::DATE")
-        return SafeSql(sql=f"DATE '{iso}'")
 
     def raw(self, s: str) -> SafeSql:
         """Wrap a string as a pre-escaped SafeSql fragment.
