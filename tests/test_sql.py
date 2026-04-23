@@ -405,3 +405,36 @@ class TestLiteralFloat64BigQuery:
     def test_float_alias(self) -> None:
         sql = SQL("bigquery")
         assert sql.literal(1.5, type="FLOAT").sql == "1.5"
+
+
+class TestLiteralBoolean:
+    def test_true_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(True, type="BOOLEAN").sql == "TRUE"
+
+    def test_false_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(False, type="BOOLEAN").sql == "FALSE"
+
+    def test_true_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(True, type="BOOL").sql == "TRUE"
+
+    def test_bigquery_boolean_alias(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(False, type="BOOLEAN").sql == "FALSE"
+
+    def test_rejects_int_1(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="BOOLEAN"):
+            sql.literal(1, type="BOOLEAN")
+
+    def test_rejects_int_0(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="BOOLEAN"):
+            sql.literal(0, type="BOOLEAN")
+
+    def test_rejects_string(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="BOOLEAN"):
+            sql.literal("true", type="BOOLEAN")

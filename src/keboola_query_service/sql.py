@@ -133,6 +133,15 @@ def _emit_float(value: object) -> str:
     )
 
 
+def _emit_boolean(value: object) -> str:
+    if not isinstance(value, bool):
+        raise TypeError(
+            f"literal(type='BOOLEAN') expects bool, "
+            f"got {type(value).__name__}: {value!r}"
+        )
+    return "TRUE" if value else "FALSE"
+
+
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
     "INT": (
@@ -146,6 +155,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
         "int|float",
         _emit_float,
     ),
+    "BOOLEAN": ((), "bool", _emit_boolean),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -158,6 +168,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "NUMERIC": (("DECIMAL",), "int|Decimal|str", _emit_numeric_bigquery),
     "BIGNUMERIC": (("BIGDECIMAL",), "int|Decimal|str", _emit_bignumeric_bigquery),
     "FLOAT64": (("FLOAT",), "int|float", _emit_float),
+    "BOOL": (("BOOLEAN",), "bool", _emit_boolean),
 }
 
 
