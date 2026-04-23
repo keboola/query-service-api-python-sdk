@@ -1,7 +1,7 @@
 """Tests for keboola_query_service.sql."""
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 
 import pytest
@@ -496,3 +496,42 @@ class TestLiteralTime:
         sql = SQL("snowflake")
         with pytest.raises(ValueError, match="TIME"):
             sql.literal("not-a-time", type="TIME")
+
+
+class TestLiteralTimestampNtz:
+    def test_naive_datetime_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        dt = datetime(2026, 4, 21, 12, 34, 56, 789000)
+        assert (
+            sql.literal(dt, type="TIMESTAMP_NTZ").sql
+            == "'2026-04-21 12:34:56.789000'::TIMESTAMP_NTZ"
+        )
+
+    def test_datetime_alias_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        dt = datetime(2026, 4, 21, 12, 34, 56)
+        assert (
+            sql.literal(dt, type="DATETIME").sql
+            == "'2026-04-21 12:34:56'::TIMESTAMP_NTZ"
+        )
+
+    def test_datetime_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        dt = datetime(2026, 4, 21, 12, 34, 56)
+        assert (
+            sql.literal(dt, type="DATETIME").sql
+            == "DATETIME '2026-04-21 12:34:56'"
+        )
+
+    def test_string_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        assert (
+            sql.literal("2026-04-21 12:34:56", type="DATETIME").sql
+            == "DATETIME '2026-04-21 12:34:56'"
+        )
+
+    def test_rejects_tz_aware(self) -> None:
+        sql = SQL("snowflake")
+        dt = datetime(2026, 4, 21, tzinfo=timezone.utc)
+        with pytest.raises(TypeError, match="naive"):
+            sql.literal(dt, type="TIMESTAMP_NTZ")

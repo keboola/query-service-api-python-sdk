@@ -197,6 +197,41 @@ def _emit_time_bigquery(value: object) -> str:
     return f"TIME '{_coerce_time(value, 'TIME')}'"
 
 
+def _coerce_naive_datetime(value: object, type_label: str) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            raise TypeError(
+                f"literal(type={type_label!r}) expects naive datetime, got tz-aware"
+            )
+        return value.isoformat(sep=" ")
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as e:
+            raise ValueError(
+                f"literal(type={type_label!r}) expects ISO datetime string, "
+                f"got: {value!r}"
+            ) from e
+        if parsed.tzinfo is not None:
+            raise ValueError(
+                f"literal(type={type_label!r}) expects naive datetime string, "
+                f"got tz-aware: {value!r}"
+            )
+        return parsed.isoformat(sep=" ")
+    raise TypeError(
+        f"literal(type={type_label!r}) expects naive datetime or string, "
+        f"got {type(value).__name__}: {value!r}"
+    )
+
+
+def _emit_timestamp_ntz_snowflake(value: object) -> str:
+    return f"'{_coerce_naive_datetime(value, 'TIMESTAMP_NTZ')}'::TIMESTAMP_NTZ"
+
+
+def _emit_datetime_bigquery(value: object) -> str:
+    return f"DATETIME '{_coerce_naive_datetime(value, 'DATETIME')}'"
+
+
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
     "INT": (
@@ -213,6 +248,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "BOOLEAN": ((), "bool", _emit_boolean),
     "DATE": ((), "date|str", _emit_date_snowflake),
     "TIME": ((), "time|str", _emit_time_snowflake),
+    "TIMESTAMP_NTZ": (("DATETIME",), "datetime|str", _emit_timestamp_ntz_snowflake),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -228,6 +264,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "BOOL": (("BOOLEAN",), "bool", _emit_boolean),
     "DATE": ((), "date|str", _emit_date_bigquery),
     "TIME": ((), "time|str", _emit_time_bigquery),
+    "DATETIME": ((), "datetime|str", _emit_datetime_bigquery),
 }
 
 
