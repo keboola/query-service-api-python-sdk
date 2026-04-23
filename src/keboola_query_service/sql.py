@@ -1,14 +1,14 @@
 """SQL escape helper for the Keboola Query Service.
 
-Provides safe value interpolation into raw SQL strings for Snowflake and
-BigQuery. See docs/superpowers/specs/2026-04-21-sdk-quote-helper-design.md
-in connection-docs for the design rationale.
+Dialect-bound factory producing safe SQL fragments. Callers declare the
+SQL type of every literal explicitly via the ``type=`` keyword argument.
+See docs/superpowers/specs/2026-04-21-sdk-quote-helper-design.md for the
+design rationale.
 """
 from __future__ import annotations
 
-import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime
 from typing import Literal
 
 Dialect = Literal["snowflake", "bigquery"]
@@ -21,7 +21,7 @@ class SafeSql:
     """Trust marker for already-escaped SQL fragments.
 
     Do not construct directly for user input — use ``SQL.literal()``,
-    ``SQL.ident()``, or ``SQL.raw()``.
+    ``SQL.ident()``, ``SQL.list()``, or ``SQL.raw()``.
     """
 
     sql: str
@@ -30,8 +30,54 @@ class SafeSql:
         return self.sql
 
 
+# Per-dialect dispatch entry: (aliases, accepted_types_label, emitter).
+_DispatchEntry = tuple[tuple[str, ...], str, Callable[[object], str]]
+
+
+def _emit_string(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError(
+            f"literal(type='STRING') expects str, got {type(value).__name__}: {value!r}"
+        )
+    if "\x00" in value:
+        raise ValueError(
+            "String literal contains NUL character, which neither "
+            "Snowflake nor BigQuery accept"
+        )
+    escaped = value.replace("\\", "\\\\").replace("'", "''")
+    return "'" + escaped + "'"
+
+
+_SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
+    "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
+}
+
+_BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
+    "STRING": ((), "str", _emit_string),
+}
+
+
+def _build_alias_index(table: dict[str, _DispatchEntry]) -> dict[str, str]:
+    """Flatten canonical + aliases → canonical lookup, all upper-cased."""
+    index: dict[str, str] = {}
+    for canonical, (aliases, _, _) in table.items():
+        index[canonical.upper()] = canonical
+        for alias in aliases:
+            index[alias.upper()] = canonical
+    return index
+
+
+_SNOWFLAKE_ALIAS_INDEX = _build_alias_index(_SNOWFLAKE_TYPES)
+_BIGQUERY_ALIAS_INDEX = _build_alias_index(_BIGQUERY_TYPES)
+
+
 class SQL:
-    """Dialect-bound SQL escape helper."""
+    """Dialect-bound SQL escape helper.
+
+    All ``literal()`` calls require an explicit ``type=`` keyword argument
+    naming the SQL type. Type names are case-insensitive. Aliases emit
+    identically to their canonical form (e.g. ``VARCHAR`` == ``STRING``).
+    """
 
     def __init__(self, dialect: Dialect) -> None:
         if dialect not in _VALID_DIALECTS:
@@ -40,83 +86,37 @@ class SQL:
                 f"Supported: 'snowflake', 'bigquery'"
             )
         self.dialect: Dialect = dialect
+        if dialect == "snowflake":
+            self._types = _SNOWFLAKE_TYPES
+            self._alias_index = _SNOWFLAKE_ALIAS_INDEX
+        else:
+            self._types = _BIGQUERY_TYPES
+            self._alias_index = _BIGQUERY_ALIAS_INDEX
 
-    def literal(self, value: object) -> SafeSql:
-        """Escape a Python value into a SQL literal fragment.
-
-        Supported types: None, bool, int, float (finite), str, date,
-        datetime, list/tuple, SafeSql. Unknown types raise TypeError
-        with a message suggesting ``str(value)`` as a workaround for
-        Decimal / UUID / bytes.
-
-        Float note: values are emitted via ``repr()``. ``repr(0.1 + 0.2)``
-        is ``'0.30000000000000004'`` — faithful to the IEEE 754 double.
-        """
-        # Order matters. SafeSql first so pre-escaped fragments pass through.
-        if isinstance(value, SafeSql):
-            return value
+    def literal(self, value: object, *, type: str) -> SafeSql:
+        """Escape ``value`` into a SQL literal of the declared ``type``."""
+        canonical = self._resolve_type(type)
         if value is None:
             return SafeSql(sql="NULL")
-        # bool must be checked before int — isinstance(True, int) is True.
-        if isinstance(value, bool):
-            return SafeSql(sql="TRUE" if value else "FALSE")
-        if isinstance(value, int):
-            return SafeSql(sql=str(value))
-        if isinstance(value, float):
-            if not math.isfinite(value):
-                raise ValueError(
-                    f"Cannot escape non-finite float: {value!r}. "
-                    "Snowflake and BigQuery literals do not support NaN/Infinity."
-                )
-            return SafeSql(sql=repr(value))
-        if isinstance(value, str):
-            if "\x00" in value:
-                raise ValueError(
-                    "String literal contains NUL character, which neither "
-                    "Snowflake nor BigQuery accept"
-                )
-            # Both dialects: escape backslash and single quote.
-            escaped = value.replace("\\", "\\\\").replace("'", "''")
-            return SafeSql(sql="'" + escaped + "'")
-        # datetime.datetime must be checked before datetime.date —
-        # datetime is a subclass of date.
-        if isinstance(value, datetime):
-            iso = value.isoformat(sep=" ")
-            if self.dialect == "snowflake":
-                kind = "TIMESTAMP_TZ" if value.tzinfo is not None else "TIMESTAMP_NTZ"
-                return SafeSql(sql=f"'{iso}'::{kind}")
-            # bigquery
-            kind = "TIMESTAMP" if value.tzinfo is not None else "DATETIME"
-            return SafeSql(sql=f"{kind} '{iso}'")
-        if isinstance(value, date):
-            iso = value.isoformat()
-            if self.dialect == "snowflake":
-                return SafeSql(sql=f"'{iso}'::DATE")
-            return SafeSql(sql=f"DATE '{iso}'")
-        if isinstance(value, (list, tuple)):
-            if not value:
-                return SafeSql(sql="(NULL)")
-            parts: list[str] = []
-            for elem in value:
-                if isinstance(elem, (list, tuple)):
-                    raise TypeError(
-                        "Nested lists/tuples are not supported in SQL literals"
-                    )
-                parts.append(self.literal(elem).sql)
-            return SafeSql(sql="(" + ", ".join(parts) + ")")
-        raise TypeError(
-            f"Cannot escape value of type {type(value).__name__}. "
-            "Supported: None, bool, int, float, str, date, datetime, "
-            "list/tuple, SafeSql. If you have a Decimal/UUID/bytes value, "
-            "convert to str explicitly and pass that."
-        )
+        _, _expected, emitter = self._types[canonical]
+        return SafeSql(sql=emitter(value))
+
+    def _resolve_type(self, type_name: str) -> str:
+        key = type_name.upper()
+        if key not in self._alias_index:
+            supported = ", ".join(sorted(self._types.keys()))
+            raise ValueError(
+                f"Unknown SQL type {type_name!r} for dialect "
+                f"{self.dialect!r}. Supported: {supported}"
+            )
+        return self._alias_index[key]
 
     def raw(self, s: str) -> SafeSql:
-        """Wrap a string as a pre-escaped SafeSql fragment.
+        """Wrap a string as a pre-escaped ``SafeSql`` fragment.
 
-        Escape hatch for injecting SQL the helper doesn't directly support
-        (e.g., ``CURRENT_TIMESTAMP``, backend-specific function calls).
-        Use only with strings you fully control — never user input.
+        Escape hatch for SQL the helper doesn't escape directly
+        (``CURRENT_TIMESTAMP``, backend-specific function calls). Use
+        only with strings you fully control — never user input.
         """
         if not isinstance(s, str):
             raise TypeError(f"raw() requires str, got: {type(s).__name__}")
@@ -126,11 +126,7 @@ class SQL:
         """Quote one or more identifier parts and join with dots.
 
         Dots inside a part are preserved (never split). Each part is
-        quoted and escaped per the active dialect:
-
-        - Snowflake: wrap in ``"``, double internal ``"``, reject ``\\0``.
-        - BigQuery:  wrap in `` ` ``, prefix internal `` ` `` and ``\\``
-          with ``\\``, reject ``\\0``, ``\\n``, ``\\r``.
+        quoted and escaped per the active dialect.
         """
         if not parts:
             raise ValueError("ident() requires at least one part")

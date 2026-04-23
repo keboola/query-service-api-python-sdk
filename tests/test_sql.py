@@ -1,11 +1,6 @@
 """Tests for keboola_query_service.sql."""
 from __future__ import annotations
 
-import math
-from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
-from uuid import UUID
-
 import pytest
 
 from keboola_query_service.sql import SQL, SafeSql
@@ -123,193 +118,88 @@ class TestIdentBigQuery:
             sql.ident("a\x00b")
 
 
-class TestLiteralPrimitives:
-    def test_none_is_null(self) -> None:
-        assert SQL("snowflake").literal(None).sql == "NULL"
-
-    def test_true_is_TRUE(self) -> None:
-        assert SQL("snowflake").literal(True).sql == "TRUE"
-
-    def test_false_is_FALSE(self) -> None:
-        assert SQL("snowflake").literal(False).sql == "FALSE"
-
-    def test_int_zero(self) -> None:
-        assert SQL("snowflake").literal(0).sql == "0"
-
-    def test_int_negative(self) -> None:
-        assert SQL("snowflake").literal(-1).sql == "-1"
-
-    def test_int_large(self) -> None:
-        assert SQL("snowflake").literal(10**100).sql == "1" + "0" * 100
-
-    def test_float_simple(self) -> None:
-        assert SQL("snowflake").literal(1.5).sql == "1.5"
-
-    def test_float_round_trip_lockin(self) -> None:
-        # Regression: do not round — faithful to the IEEE 754 double
-        assert SQL("snowflake").literal(0.1 + 0.2).sql == "0.30000000000000004"
-
-    def test_float_scientific_notation(self) -> None:
-        # repr(1e300) is '1e+300' — accepted by both dialects
-        assert SQL("snowflake").literal(1e300).sql == "1e+300"
-
-    def test_reject_nan(self) -> None:
-        with pytest.raises(ValueError, match="non-finite"):
-            SQL("snowflake").literal(float("nan"))
-
-    def test_reject_positive_infinity(self) -> None:
-        with pytest.raises(ValueError, match="non-finite"):
-            SQL("snowflake").literal(math.inf)
-
-    def test_reject_negative_infinity(self) -> None:
-        with pytest.raises(ValueError, match="non-finite"):
-            SQL("snowflake").literal(-math.inf)
-
-
-class TestLiteralBoolBeforeInt:
-    """Regression: isinstance(True, int) is True — bool must dispatch first."""
-
-    def test_true_is_not_1(self) -> None:
-        assert SQL("snowflake").literal(True).sql == "TRUE"
-
-    def test_false_is_not_0(self) -> None:
-        assert SQL("snowflake").literal(False).sql == "FALSE"
-
-
-class TestLiteralStrings:
+class TestLiteralStringSnowflake:
     def test_empty_string(self) -> None:
-        assert SQL("snowflake").literal("").sql == "''"
+        sql = SQL("snowflake")
+        assert sql.literal("", type="STRING").sql == "''"
 
     def test_simple_string(self) -> None:
-        assert SQL("snowflake").literal("hello").sql == "'hello'"
+        sql = SQL("snowflake")
+        assert sql.literal("hello", type="STRING").sql == "'hello'"
 
-    def test_doubles_internal_single_quote(self) -> None:
-        assert SQL("snowflake").literal("O'Brien").sql == "'O''Brien'"
+    def test_escapes_single_quote(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("o'brien", type="STRING").sql == "'o''brien'"
 
-    def test_snowflake_escapes_backslash(self) -> None:
-        # Regression: Snowflake interprets \n as newline in string literals.
-        # Python string "a\\nb" is 4 chars: a, \, n, b. We must emit
-        # 'a\\nb' so Snowflake parses back to the same 4 chars.
-        assert SQL("snowflake").literal("a\\nb").sql == "'a\\\\nb'"
+    def test_escapes_backslash(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("a\\b", type="STRING").sql == "'a\\\\b'"
 
-    def test_bigquery_escapes_backslash(self) -> None:
-        assert SQL("bigquery").literal("a\\nb").sql == "'a\\\\nb'"
+    def test_preserves_newline_literal(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("a\nb", type="STRING").sql == "'a\nb'"
 
-    def test_literal_newline_preserved(self) -> None:
-        # Actual newline (LF) byte, not the two-char \n escape —
-        # passes through inside the quotes unchanged.
-        assert SQL("snowflake").literal("a\nb").sql == "'a\nb'"
-
-    def test_reject_nul_in_string(self) -> None:
+    def test_rejects_nul(self) -> None:
+        sql = SQL("snowflake")
         with pytest.raises(ValueError, match="NUL"):
-            SQL("snowflake").literal("a\x00b")
+            sql.literal("a\x00b", type="STRING")
 
-
-class TestLiteralDates:
-    def test_date_snowflake(self) -> None:
-        assert SQL("snowflake").literal(date(2026, 4, 21)).sql == "'2026-04-21'::DATE"
-
-    def test_date_bigquery(self) -> None:
-        assert SQL("bigquery").literal(date(2026, 4, 21)).sql == "DATE '2026-04-21'"
-
-    def test_naive_datetime_snowflake(self) -> None:
-        dt = datetime(2026, 4, 21, 14, 30, 45, 123456)
-        assert (
-            SQL("snowflake").literal(dt).sql
-            == "'2026-04-21 14:30:45.123456'::TIMESTAMP_NTZ"
-        )
-
-    def test_naive_datetime_bigquery(self) -> None:
-        dt = datetime(2026, 4, 21, 14, 30, 45, 123456)
-        assert (
-            SQL("bigquery").literal(dt).sql
-            == "DATETIME '2026-04-21 14:30:45.123456'"
-        )
-
-    def test_tz_aware_datetime_snowflake(self) -> None:
-        tz = timezone(timedelta(hours=-7))
-        dt = datetime(2026, 4, 21, 14, 30, 45, 123456, tzinfo=tz)
-        assert (
-            SQL("snowflake").literal(dt).sql
-            == "'2026-04-21 14:30:45.123456-07:00'::TIMESTAMP_TZ"
-        )
-
-    def test_tz_aware_datetime_bigquery(self) -> None:
-        tz = timezone(timedelta(hours=-7))
-        dt = datetime(2026, 4, 21, 14, 30, 45, 123456, tzinfo=tz)
-        assert (
-            SQL("bigquery").literal(dt).sql
-            == "TIMESTAMP '2026-04-21 14:30:45.123456-07:00'"
-        )
-
-    def test_datetime_utc(self) -> None:
-        dt = datetime(2026, 4, 21, 14, 30, 0, tzinfo=timezone.utc)
-        # Python formats +00:00 as +00:00 via isoformat
-        assert "+00:00" in SQL("snowflake").literal(dt).sql
-
-    def test_reject_time_alone(self) -> None:
-        # time without a date is not supported — too ambiguous across backends
-        with pytest.raises(TypeError):
-            SQL("snowflake").literal(time(14, 30))
-
-
-class TestLiteralLists:
-    def test_non_empty_list(self) -> None:
-        assert SQL("snowflake").literal([1, 2, 3]).sql == "(1, 2, 3)"
-
-    def test_mixed_types(self) -> None:
-        assert (
-            SQL("snowflake").literal([1, "a", None, True]).sql
-            == "(1, 'a', NULL, TRUE)"
-        )
-
-    def test_tuple_works_like_list(self) -> None:
-        assert SQL("snowflake").literal((1, 2, 3)).sql == "(1, 2, 3)"
-
-    def test_empty_list_is_NULL_tuple(self) -> None:
-        # IN () is a syntax error; IN (NULL) returns no rows, matching empty-set.
-        assert SQL("snowflake").literal([]).sql == "(NULL)"
-
-    def test_empty_tuple_is_NULL_tuple(self) -> None:
-        assert SQL("snowflake").literal(()).sql == "(NULL)"
-
-    def test_nested_list_raises(self) -> None:
-        with pytest.raises(TypeError, match="Nested"):
-            SQL("snowflake").literal([1, [2, 3]])
-
-
-class TestLiteralSafeSqlPassthrough:
-    def test_literal_passes_safesql_unchanged(self) -> None:
+    def test_rejects_non_string_value(self) -> None:
         sql = SQL("snowflake")
-        marker = sql.raw("CURRENT_TIMESTAMP")
-        result = sql.literal(marker)
-        assert result is marker  # identity-preserving
+        with pytest.raises(TypeError, match="STRING"):
+            sql.literal(42, type="STRING")
 
-    def test_literal_passes_ident_unchanged(self) -> None:
+    @pytest.mark.parametrize("alias", ["VARCHAR", "CHAR", "CHARACTER", "TEXT"])
+    def test_string_aliases_emit_identically(self, alias: str) -> None:
         sql = SQL("snowflake")
-        i = sql.ident("in.c-main", "customers")
-        assert sql.literal(i) is i
+        assert sql.literal("x", type=alias).sql == "'x'"
 
 
-class TestLiteralUnknownTypes:
-    def test_rejects_decimal_with_str_hint(self) -> None:
-        with pytest.raises(TypeError, match="convert to str"):
-            SQL("snowflake").literal(Decimal("1.5"))
+class TestLiteralStringBigQuery:
+    def test_simple_string(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal("hello", type="STRING").sql == "'hello'"
 
-    def test_rejects_uuid(self) -> None:
-        with pytest.raises(TypeError, match="convert to str"):
-            SQL("snowflake").literal(UUID("00000000-0000-0000-0000-000000000000"))
+    def test_escapes_single_quote(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal("o'brien", type="STRING").sql == "'o''brien'"
 
-    def test_rejects_bytes(self) -> None:
-        with pytest.raises(TypeError, match="convert to str"):
-            SQL("snowflake").literal(b"x")
 
-    def test_rejects_custom_class(self) -> None:
-        class Foo:
-            pass
+class TestLiteralNull:
+    def test_none_emits_null_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(None, type="STRING").sql == "NULL"
 
-        with pytest.raises(TypeError):
-            SQL("snowflake").literal(Foo())
+    def test_none_emits_null_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(None, type="STRING").sql == "NULL"
+
+    def test_unknown_type_still_raises_even_with_none(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="Unknown SQL type"):
+            sql.literal(None, type="BANANA")
+
+
+class TestLiteralCaseInsensitive:
+    def test_lowercase_type_name(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("x", type="string").sql == "'x'"
+
+    def test_mixed_case_type_name(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal("x", type="String").sql == "'x'"
+
+
+class TestLiteralUnknownType:
+    def test_unknown_type_snowflake(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="Unknown SQL type 'BANANA'"):
+            sql.literal("x", type="BANANA")
+
+    def test_unknown_type_lists_supported(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="Supported: STRING"):
+            sql.literal("x", type="BANANA")
 
 
 class TestPackageExports:
