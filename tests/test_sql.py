@@ -315,6 +315,15 @@ class TestLiteralNumberSnowflake:
         sql = SQL("snowflake")
         assert sql.literal(1, type=alias).sql == "1"
 
+    def test_scientific_notation_decimal_becomes_fixed(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(Decimal("1E+10"), type="NUMBER").sql == "10000000000"
+
+    def test_small_scientific_notation_decimal(self) -> None:
+        sql = SQL("snowflake")
+        # Decimal("1E-2") should emit "0.01", not "1E-2"
+        assert sql.literal(Decimal("1E-2"), type="NUMBER").sql == "0.01"
+
 
 class TestLiteralNumericBigQuery:
     def test_int_input(self) -> None:
@@ -338,3 +347,10 @@ class TestLiteralNumericBigQuery:
     def test_bigdecimal_alias(self) -> None:
         sql = SQL("bigquery")
         assert sql.literal(1, type="BIGDECIMAL").sql == "BIGNUMERIC '1'"
+
+    def test_scientific_notation_decimal_becomes_fixed(self) -> None:
+        sql = SQL("bigquery")
+        assert (
+            sql.literal(Decimal("1E+10"), type="NUMERIC").sql
+            == "NUMERIC '10000000000'"
+        )

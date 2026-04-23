@@ -85,7 +85,7 @@ def _coerce_decimal_string(value: object, type_label: str) -> str:
                 f"Cannot escape non-finite Decimal: {value!r}. "
                 f"NUMBER/NUMERIC literals do not support NaN/Infinity."
             )
-        return str(value)
+        return f"{value:f}"
     if isinstance(value, str):
         if not _NUMERIC_STRING_RE.match(value):
             raise ValueError(
