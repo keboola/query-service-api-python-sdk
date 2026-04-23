@@ -198,7 +198,7 @@ class TestLiteralUnknownType:
 
     def test_unknown_type_lists_supported(self) -> None:
         sql = SQL("snowflake")
-        with pytest.raises(ValueError, match="Supported: STRING"):
+        with pytest.raises(ValueError, match="Supported:.*STRING"):
             sql.literal("x", type="BANANA")
 
 
@@ -215,3 +215,57 @@ class TestPackageExports:
 
     def test_dialect_importable_from_package(self) -> None:
         from keboola_query_service import Dialect  # noqa: F401
+
+
+class TestLiteralIntSnowflake:
+    def test_positive(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(42, type="INT").sql == "42"
+
+    def test_negative(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(-7, type="INT").sql == "-7"
+
+    def test_zero(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(0, type="INT").sql == "0"
+
+    def test_arbitrary_precision(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(10**100, type="INT").sql == "1" + "0" * 100
+
+    def test_rejects_bool(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="INT"):
+            sql.literal(True, type="INT")
+
+    def test_rejects_float(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="INT"):
+            sql.literal(1.5, type="INT")
+
+    @pytest.mark.parametrize(
+        "alias", ["INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"],
+    )
+    def test_int_aliases_emit_identically(self, alias: str) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal(42, type=alias).sql == "42"
+
+
+class TestLiteralInt64BigQuery:
+    def test_positive(self) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(42, type="INT64").sql == "42"
+
+    @pytest.mark.parametrize(
+        "alias",
+        ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"],
+    )
+    def test_int64_aliases(self, alias: str) -> None:
+        sql = SQL("bigquery")
+        assert sql.literal(7, type=alias).sql == "7"
+
+    def test_rejects_bool(self) -> None:
+        sql = SQL("bigquery")
+        with pytest.raises(TypeError, match="INT64"):
+            sql.literal(True, type="INT64")

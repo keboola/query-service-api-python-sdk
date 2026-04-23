@@ -48,12 +48,40 @@ def _emit_string(value: object) -> str:
     return "'" + escaped + "'"
 
 
+def _emit_int_snowflake(value: object) -> str:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"literal(type='INT') expects int (not bool), got "
+            f"{type(value).__name__}: {value!r}"
+        )
+    return str(value)
+
+
+def _emit_int_bigquery(value: object) -> str:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"literal(type='INT64') expects int (not bool), got "
+            f"{type(value).__name__}: {value!r}"
+        )
+    return str(value)
+
+
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
+    "INT": (
+        ("INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"),
+        "int",
+        _emit_int_snowflake,
+    ),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "STRING": ((), "str", _emit_string),
+    "INT64": (
+        ("INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"),
+        "int",
+        _emit_int_bigquery,
+    ),
 }
 
 
