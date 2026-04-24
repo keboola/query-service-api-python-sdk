@@ -615,3 +615,46 @@ class TestLiteralBinary:
     def test_hex_string_bigquery(self) -> None:
         sql = SQL("bigquery")
         assert sql.literal("dead", type="BYTES").sql == "b'\\xde\\xad'"
+
+
+class TestLiteralJsonSnowflake:
+    def test_dict_variant(self) -> None:
+        sql = SQL("snowflake")
+        result = sql.literal({"a": 1}, type="VARIANT").sql
+        assert result == "PARSE_JSON('{\"a\": 1}')"
+
+    def test_list_array(self) -> None:
+        sql = SQL("snowflake")
+        result = sql.literal([1, 2, 3], type="ARRAY").sql
+        assert result == "PARSE_JSON('[1, 2, 3]')"
+
+    def test_object_alias(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.literal({}, type="OBJECT").sql == "PARSE_JSON('{}')"
+
+    def test_escapes_single_quote_in_body(self) -> None:
+        sql = SQL("snowflake")
+        result = sql.literal({"name": "O'Brien"}, type="VARIANT").sql
+        assert result == "PARSE_JSON('{\"name\": \"O''Brien\"}')"
+
+    def test_nested(self) -> None:
+        sql = SQL("snowflake")
+        result = sql.literal({"outer": {"inner": [1, 2]}}, type="VARIANT").sql
+        assert result == "PARSE_JSON('{\"outer\": {\"inner\": [1, 2]}}')"
+
+    def test_non_serializable_raises(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="VARIANT"):
+            sql.literal({"bad": object()}, type="VARIANT")
+
+
+class TestLiteralJsonBigQuery:
+    def test_dict(self) -> None:
+        sql = SQL("bigquery")
+        result = sql.literal({"a": 1}, type="JSON").sql
+        assert result == "JSON '{\"a\": 1}'"
+
+    def test_escapes_single_quote_in_body(self) -> None:
+        sql = SQL("bigquery")
+        result = sql.literal({"name": "O'Brien"}, type="JSON").sql
+        assert result == "JSON '{\"name\": \"O''Brien\"}'"

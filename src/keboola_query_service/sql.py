@@ -7,6 +7,7 @@ design rationale.
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Callable
@@ -297,6 +298,24 @@ def _emit_bytes_bigquery(value: object) -> str:
     return f"b'{escaped}'"
 
 
+def _coerce_json_body(value: object, type_label: str) -> str:
+    try:
+        body = json.dumps(value)
+    except TypeError as e:
+        raise TypeError(
+            f"literal(type={type_label!r}): value is not JSON-serializable: {e}"
+        ) from e
+    return body.replace("'", "''")
+
+
+def _emit_variant_snowflake(value: object) -> str:
+    return f"PARSE_JSON('{_coerce_json_body(value, 'VARIANT')}')"
+
+
+def _emit_json_bigquery(value: object) -> str:
+    return f"JSON '{_coerce_json_body(value, 'JSON')}'"
+
+
 _SNOWFLAKE_AMBIGUOUS: set[str] = {"TIMESTAMP"}
 
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
@@ -318,6 +337,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "TIMESTAMP_NTZ": (("DATETIME",), "datetime|str", _emit_timestamp_ntz_snowflake),
     "TIMESTAMP_TZ": (("TIMESTAMP_LTZ",), "datetime|str", _emit_timestamp_tz_snowflake),
     "BINARY": (("VARBINARY",), "bytes|hex str", _emit_binary_snowflake),
+    "VARIANT": (("OBJECT", "ARRAY"), "json-serializable", _emit_variant_snowflake),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -336,6 +356,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "DATETIME": ((), "datetime|str", _emit_datetime_bigquery),
     "TIMESTAMP": ((), "datetime|str", _emit_timestamp_bigquery),
     "BYTES": ((), "bytes|hex str", _emit_bytes_bigquery),
+    "JSON": ((), "json-serializable", _emit_json_bigquery),
 }
 
 
