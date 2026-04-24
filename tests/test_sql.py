@@ -693,3 +693,55 @@ class TestLiteralGeospatial:
             sql.literal("POINT'X", type="GEOGRAPHY").sql
             == "TO_GEOGRAPHY('POINT''X')"
         )
+
+
+class TestList:
+    def test_non_empty_ints(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.list([1, 2, 3], item_type="INT").sql == "(1, 2, 3)"
+
+    def test_non_empty_strings(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.list(["a", "b"], item_type="STRING").sql == "('a', 'b')"
+        )
+
+    def test_single_item(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.list([42], item_type="INT").sql == "(42)"
+
+    def test_empty_emits_null(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.list([], item_type="INT").sql == "(NULL)"
+
+    def test_tuple_accepted(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.list((1, 2), item_type="INT").sql == "(1, 2)"
+
+    def test_generator_accepted(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.list((i for i in range(3)), item_type="INT").sql == "(0, 1, 2)"
+
+    def test_rejects_str_values(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="iterable"):
+            sql.list("abc", item_type="STRING")  # type: ignore[arg-type]
+
+    def test_rejects_bytes_values(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="iterable"):
+            sql.list(b"abc", item_type="BINARY")  # type: ignore[arg-type]
+
+    def test_unknown_item_type(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(ValueError, match="Unknown SQL type"):
+            sql.list([1], item_type="BANANA")
+
+    def test_item_failure_includes_index(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="index 1"):
+            sql.list([1, "nope", 3], item_type="INT")
+
+    def test_none_item_emits_null(self) -> None:
+        sql = SQL("snowflake")
+        assert sql.list([1, None, 3], item_type="INT").sql == "(1, NULL, 3)"

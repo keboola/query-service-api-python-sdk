@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -443,6 +443,31 @@ class SQL:
                 f"{self.dialect!r}. Supported: {supported}"
             )
         return self._alias_index[key]
+
+    def list(
+        self, values: Iterable[object], *, item_type: str
+    ) -> SafeSql:
+        """Emit ``(a, b, c)`` for use in an ``IN (...)`` clause.
+
+        Each element routes through ``literal(elem, type=item_type)``.
+        Empty iterable emits ``(NULL)`` (SQL ``IN ()`` is a syntax error;
+        ``IN (NULL)`` returns no rows). ``str`` and ``bytes`` are rejected
+        as ``values`` even though they are iterable — almost always a mistake.
+        """
+        if isinstance(values, (str, bytes)):
+            raise TypeError(
+                "list() values must be an iterable of items, not str or bytes"
+            )
+        self._resolve_type(item_type)  # early clear error for bad item_type
+        parts: list[str] = []
+        for idx, elem in enumerate(values):
+            try:
+                parts.append(self.literal(elem, type=item_type).sql)
+            except (TypeError, ValueError) as e:
+                raise type(e)(f"list() item at index {idx}: {e}") from e
+        if not parts:
+            return SafeSql(sql="(NULL)")
+        return SafeSql(sql="(" + ", ".join(parts) + ")")
 
     def raw(self, s: str) -> SafeSql:
         """Wrap a string as a pre-escaped ``SafeSql`` fragment.
