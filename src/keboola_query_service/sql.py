@@ -1,9 +1,22 @@
 """SQL escape helper for the Keboola Query Service.
 
-Dialect-bound factory producing safe SQL fragments. Callers declare the
-SQL type of every literal explicitly via the ``type=`` keyword argument.
-See docs/superpowers/specs/2026-04-21-sdk-quote-helper-design.md for the
-design rationale.
+Provides dialect-bound safe value interpolation for raw SQL strings on
+Snowflake and BigQuery. Callers declare the SQL type of every literal
+explicitly via the ``type=`` keyword argument. See
+docs/superpowers/specs/2026-04-21-sdk-quote-helper-design.md for design
+rationale.
+
+Basic usage::
+
+    from keboola_query_service import SQL
+
+    sql = SQL("snowflake")
+    table = sql.ident("in.c-main", "approvals")
+    query = (
+        f"UPDATE {table} "
+        f"SET status = {sql.literal('approved', type='STRING')} "
+        f"WHERE id = {sql.literal(123, type='INT')}"
+    )
 """
 from __future__ import annotations
 
@@ -421,7 +434,23 @@ class SQL:
             self._alias_index = _BIGQUERY_ALIAS_INDEX
 
     def literal(self, value: object, *, type: str) -> SafeSql:
-        """Escape ``value`` into a SQL literal of the declared ``type``."""
+        """Escape ``value`` into a SQL literal of the declared ``type``.
+
+        Case-insensitive; aliases emit identically to their canonical form
+        (``VARCHAR`` -> ``STRING``; ``TIMESTAMP_LTZ`` -> ``TIMESTAMP_TZ``).
+        ``None`` emits ``NULL`` for any declared type.
+
+        Raises:
+            ValueError: ``type`` is not supported by the active dialect, or
+                a ``str`` value fails format validation for the declared
+                type (DATE, TIME, TIMESTAMP_*, NUMBER, BINARY).
+            TypeError: the Python value does not match the expected type
+                for the declared SQL type (e.g. ``literal("foo", type="INT")``).
+
+        Float precision note: finite floats are emitted via ``repr(v)`` so
+        the output round-trips back to the same IEEE 754 double. ``repr(0.1 +
+        0.2)`` is ``'0.30000000000000004'`` — faithful, not rounded.
+        """
         canonical = self._resolve_type(type)
         if value is None:
             return SafeSql(sql="NULL")
