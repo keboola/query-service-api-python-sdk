@@ -658,3 +658,38 @@ class TestLiteralJsonBigQuery:
         sql = SQL("bigquery")
         result = sql.literal({"name": "O'Brien"}, type="JSON").sql
         assert result == "JSON '{\"name\": \"O''Brien\"}'"
+
+
+class TestLiteralGeospatial:
+    def test_snowflake_geography(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.literal("POINT(0 0)", type="GEOGRAPHY").sql
+            == "TO_GEOGRAPHY('POINT(0 0)')"
+        )
+
+    def test_snowflake_geometry(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.literal("POINT(1 1)", type="GEOMETRY").sql
+            == "TO_GEOMETRY('POINT(1 1)')"
+        )
+
+    def test_bigquery_geography(self) -> None:
+        sql = SQL("bigquery")
+        assert (
+            sql.literal("POINT(0 0)", type="GEOGRAPHY").sql
+            == "ST_GEOGFROMTEXT('POINT(0 0)')"
+        )
+
+    def test_rejects_non_string(self) -> None:
+        sql = SQL("snowflake")
+        with pytest.raises(TypeError, match="GEOGRAPHY"):
+            sql.literal(123, type="GEOGRAPHY")
+
+    def test_escapes_single_quote(self) -> None:
+        sql = SQL("snowflake")
+        assert (
+            sql.literal("POINT'X", type="GEOGRAPHY").sql
+            == "TO_GEOGRAPHY('POINT''X')"
+        )

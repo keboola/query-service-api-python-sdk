@@ -316,6 +316,27 @@ def _emit_json_bigquery(value: object) -> str:
     return f"JSON '{_coerce_json_body(value, 'JSON')}'"
 
 
+def _coerce_wkt(value: object, type_label: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(
+            f"literal(type={type_label!r}) expects WKT str, "
+            f"got {type(value).__name__}: {value!r}"
+        )
+    return value.replace("'", "''")
+
+
+def _emit_geography_snowflake(value: object) -> str:
+    return f"TO_GEOGRAPHY('{_coerce_wkt(value, 'GEOGRAPHY')}')"
+
+
+def _emit_geometry_snowflake(value: object) -> str:
+    return f"TO_GEOMETRY('{_coerce_wkt(value, 'GEOMETRY')}')"
+
+
+def _emit_geography_bigquery(value: object) -> str:
+    return f"ST_GEOGFROMTEXT('{_coerce_wkt(value, 'GEOGRAPHY')}')"
+
+
 _SNOWFLAKE_AMBIGUOUS: set[str] = {"TIMESTAMP"}
 
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
@@ -338,6 +359,8 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
     "TIMESTAMP_TZ": (("TIMESTAMP_LTZ",), "datetime|str", _emit_timestamp_tz_snowflake),
     "BINARY": (("VARBINARY",), "bytes|hex str", _emit_binary_snowflake),
     "VARIANT": (("OBJECT", "ARRAY"), "json-serializable", _emit_variant_snowflake),
+    "GEOGRAPHY": ((), "wkt str", _emit_geography_snowflake),
+    "GEOMETRY": ((), "wkt str", _emit_geometry_snowflake),
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
@@ -357,6 +380,7 @@ _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
     "TIMESTAMP": ((), "datetime|str", _emit_timestamp_bigquery),
     "BYTES": ((), "bytes|hex str", _emit_bytes_bigquery),
     "JSON": ((), "json-serializable", _emit_json_bigquery),
+    "GEOGRAPHY": ((), "wkt str", _emit_geography_bigquery),
 }
 
 
