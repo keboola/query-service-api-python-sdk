@@ -745,3 +745,35 @@ class TestList:
     def test_none_item_emits_null(self) -> None:
         sql = SQL("snowflake")
         assert sql.list([1, None, 3], item_type="INT").sql == "(1, NULL, 3)"
+
+
+class TestDocsExample:
+    def test_storage_access_update_example(self) -> None:
+        sql = SQL("snowflake")
+        table = sql.ident("in.c-main", "approvals")
+        status = sql.literal("approved", type="STRING")
+        record_id = sql.literal(123, type="INT")
+        now = sql.raw("CURRENT_TIMESTAMP")
+        query = (
+            f"UPDATE {table} "
+            f"SET status = {status}, "
+            f"    updated_at = {now} "
+            f"WHERE id = {record_id}"
+        )
+        assert query == (
+            'UPDATE "in.c-main"."approvals" '
+            "SET status = 'approved', "
+            "    updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = 123"
+        )
+
+    def test_in_clause_example(self) -> None:
+        sql = SQL("snowflake")
+        ids = [1, 2, 3, 4]
+        query = (
+            f"SELECT * FROM {sql.ident('in.c-main', 'customers')} "
+            f"WHERE id IN {sql.list(ids, item_type='INT')}"
+        )
+        assert query == (
+            'SELECT * FROM "in.c-main"."customers" WHERE id IN (1, 2, 3, 4)'
+        )
