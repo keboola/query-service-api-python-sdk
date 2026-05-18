@@ -156,6 +156,26 @@ results = client.execute_query(
 For the low-level `get_job_results` method, pagination must be handled
 manually using `offset` and `page_size` parameters.
 
+### Lazy Iteration (Memory-Efficient)
+
+For large result sets, use `execute_query_iter` to process pages one at a
+time without loading everything into memory:
+
+```python
+# Yields one QueryResult per page — memory stays bounded
+for page in client.execute_query_iter(
+    branch_id="123",
+    workspace_id="456",
+    statements=["SELECT * FROM huge_table"],
+):
+    for row in page.data:
+        process_row(row)
+```
+
+`execute_query_iter` defaults to **no row cap** (`max_rows=None`) because
+pages are not accumulated in memory.  An async variant
+`execute_query_iter_async` is also available.
+
 ### Streaming Large Results
 
 ```python
@@ -222,6 +242,7 @@ client = Client(
 | Method | Description |
 |--------|-------------|
 | `execute_query()` | Submit query, wait for completion, return all results (auto-paginated) |
+| `execute_query_iter()` | Like `execute_query()` but yields pages lazily (memory-efficient, no default row cap) |
 | `submit_job()` | Submit query job without waiting |
 | `get_job_status()` | Get current job status |
 | `get_job_results()` | Get results for a statement |

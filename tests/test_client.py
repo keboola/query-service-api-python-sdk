@@ -740,3 +740,103 @@ class TestAutoPagination:
                 page_size=page_size,
                 max_rows=max_rows,
             )
+
+    def test_execute_query_iter_yields_pages(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        """execute_query_iter yields individual pages lazily."""
+        self._setup_submit_and_status(httpx_mock)
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=0, page_size=3),
+            json=self._make_page([["1"], ["2"], ["3"]], number_of_rows=5),
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=3, page_size=3),
+            json=self._make_page([["4"], ["5"]], number_of_rows=5),
+        )
+
+        pages = list(client.execute_query_iter("123", "456", ["SELECT *"], page_size=3))
+
+        assert len(pages) == 2
+        assert pages[0].data == [["1"], ["2"], ["3"]]
+        assert pages[1].data == [["4"], ["5"]]
+
+    def test_execute_query_iter_no_default_max_rows(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        """execute_query_iter defaults to max_rows=None (no cap)."""
+        self._setup_submit_and_status(httpx_mock)
+        # 7 rows across 3 pages — all fetched because no default cap
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=0, page_size=3),
+            json=self._make_page([["1"], ["2"], ["3"]], number_of_rows=7),
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=3, page_size=3),
+            json=self._make_page([["4"], ["5"], ["6"]], number_of_rows=7),
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=6, page_size=3),
+            json=self._make_page([["7"]], number_of_rows=7),
+        )
+
+        pages = list(client.execute_query_iter("123", "456", ["SELECT *"], page_size=3))
+
+        total_rows = sum(len(p.data) for p in pages)
+        assert total_rows == 7
+
+    def test_execute_query_iter_with_max_rows(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        """execute_query_iter respects explicit max_rows."""
+        self._setup_submit_and_status(httpx_mock)
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=0, page_size=3),
+            json=self._make_page([["1"], ["2"], ["3"]], number_of_rows=10),
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=3, page_size=2),
+            json=self._make_page([["4"], ["5"]], number_of_rows=10),
+        )
+
+        pages = list(
+            client.execute_query_iter(
+                "123", "456", ["SELECT *"], page_size=3, max_rows=5
+            )
+        )
+
+        total_rows = sum(len(p.data) for p in pages)
+        assert total_rows == 5
+
+    async def test_execute_query_iter_async_yields_pages(
+        self, client: Client, httpx_mock: HTTPXMock
+    ) -> None:
+        """Async iterator variant yields pages lazily."""
+        self._setup_submit_and_status(httpx_mock)
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=0, page_size=3),
+            json=self._make_page([["1"], ["2"], ["3"]], number_of_rows=5),
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url=self._results_url(offset=3, page_size=3),
+            json=self._make_page([["4"], ["5"]], number_of_rows=5),
+        )
+
+        pages: list = []
+        async for page in client.execute_query_iter_async(
+            "123", "456", ["SELECT *"], page_size=3
+        ):
+            pages.append(page)
+
+        assert len(pages) == 2
+        assert pages[0].data == [["1"], ["2"], ["3"]]
+        assert pages[1].data == [["4"], ["5"]]

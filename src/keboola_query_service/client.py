@@ -881,6 +881,108 @@ class Client:
 
         return results
 
+    def execute_query_iter(
+        self,
+        branch_id: str,
+        workspace_id: str,
+        statements: list[str],
+        *,
+        transactional: bool = True,
+        actor_type: ActorType = ActorType.USER,
+        max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
+        session_id: str | None = None,
+        refresh_metadata_on_success: bool = False,
+        page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
+        max_rows: int | None = None,
+    ) -> Generator[QueryResult, None, None]:
+        """Execute query and yield result pages lazily.
+
+        Like :meth:`execute_query`, but yields one :class:`QueryResult` per
+        page instead of materializing all rows in memory.  Each yielded page
+        corresponds to one API response.
+
+        ``max_rows`` defaults to ``None`` (no cap) because pages are not
+        accumulated, so memory stays bounded.
+
+        Args:
+            branch_id: Branch ID
+            workspace_id: Workspace ID
+            statements: List of SQL statements to execute
+            transactional: Whether to execute in a transaction
+            actor_type: Actor type
+            max_wait_time: Maximum time to wait for completion
+            session_id: Optional session ID to reuse a Snowflake session
+            refresh_metadata_on_success: Whether to refresh workspace
+                metadata after successful execution
+            page_size: Internal page size for fetching results (default 5000)
+            max_rows: Optional cap on total rows fetched per statement.
+                Defaults to ``None`` (no limit).
+
+        Yields:
+            QueryResult pages, one per API response, for each statement
+
+        Raises:
+            JobError: If job fails
+            JobTimeoutError: If job doesn't complete in time
+            ValidationError: If page_size or max_rows are invalid
+        """
+        self._validate_pagination_options(page_size, max_rows)
+
+        job_id = self.submit_job(
+            branch_id=branch_id,
+            workspace_id=workspace_id,
+            statements=statements,
+            transactional=transactional,
+            actor_type=actor_type,
+            session_id=session_id,
+            refresh_metadata_on_success=refresh_metadata_on_success,
+        )
+
+        status = self.wait_for_job(job_id, max_wait_time=max_wait_time)
+
+        for statement in status.statements:
+            yield from self._iter_result_pages(
+                job_id, statement.id, page_size, max_rows
+            )
+
+    async def execute_query_iter_async(
+        self,
+        branch_id: str,
+        workspace_id: str,
+        statements: list[str],
+        *,
+        transactional: bool = True,
+        actor_type: ActorType = ActorType.USER,
+        max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
+        session_id: str | None = None,
+        refresh_metadata_on_success: bool = False,
+        page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
+        max_rows: int | None = None,
+    ) -> AsyncIterator[QueryResult]:
+        """Execute query and yield result pages lazily (async version).
+
+        See :meth:`execute_query_iter` for details.
+        """
+        self._validate_pagination_options(page_size, max_rows)
+
+        job_id = await self.submit_job_async(
+            branch_id=branch_id,
+            workspace_id=workspace_id,
+            statements=statements,
+            transactional=transactional,
+            actor_type=actor_type,
+            session_id=session_id,
+            refresh_metadata_on_success=refresh_metadata_on_success,
+        )
+
+        status = await self.wait_for_job_async(job_id, max_wait_time=max_wait_time)
+
+        for statement in status.statements:
+            async for page in self._iter_result_pages_async(
+                job_id, statement.id, page_size, max_rows
+            ):
+                yield page
+
     def stream_results(
         self,
         query_job_id: str,
