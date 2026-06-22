@@ -164,8 +164,16 @@ class TestLiteralStringBigQuery:
         assert sql.literal("hello", type="STRING").sql == "'hello'"
 
     def test_escapes_single_quote(self) -> None:
+        # Regression: BigQuery has no '' doubling — it concatenates adjacent
+        # string literals, so 'o''brien' would silently become 'obrien'.
+        # A single quote must be backslash-escaped (\').
         sql = SQL("bigquery")
-        assert sql.literal("o'brien", type="STRING").sql == "'o''brien'"
+        assert sql.literal("o'brien", type="STRING").sql == "'o\\'brien'"
+
+    def test_escapes_backslash_then_quote(self) -> None:
+        # Backslash doubled AND quote backslash-escaped, order-independent.
+        sql = SQL("bigquery")
+        assert sql.literal("a\\'b", type="STRING").sql == "'a\\\\\\'b'"
 
 
 class TestLiteralNull:
@@ -655,9 +663,10 @@ class TestLiteralJsonBigQuery:
         assert result == "JSON '{\"a\": 1}'"
 
     def test_escapes_single_quote_in_body(self) -> None:
+        # BigQuery JSON literal body is a single-quoted string — backslash-escape.
         sql = SQL("bigquery")
         result = sql.literal({"name": "O'Brien"}, type="JSON").sql
-        assert result == "JSON '{\"name\": \"O''Brien\"}'"
+        assert result == "JSON '{\"name\": \"O\\'Brien\"}'"
 
 
 class TestLiteralGeospatial:
@@ -692,6 +701,13 @@ class TestLiteralGeospatial:
         assert (
             sql.literal("POINT'X", type="GEOGRAPHY").sql
             == "TO_GEOGRAPHY('POINT''X')"
+        )
+
+    def test_escapes_single_quote_bigquery(self) -> None:
+        sql = SQL("bigquery")
+        assert (
+            sql.literal("POINT'X", type="GEOGRAPHY").sql
+            == "ST_GEOGFROMTEXT('POINT\\'X')"
         )
 
 

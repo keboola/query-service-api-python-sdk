@@ -52,18 +52,45 @@ class SafeSql:
 _DispatchEntry = tuple[tuple[str, ...], str, Callable[[object], str]]
 
 
-def _emit_string(value: object) -> str:
-    if not isinstance(value, str):
-        raise TypeError(
-            f"literal(type='STRING') expects str, got {type(value).__name__}: {value!r}"
-        )
-    if "\x00" in value:
-        raise ValueError(
-            "String literal contains NUL character, which neither "
-            "Snowflake nor BigQuery accept"
-        )
-    escaped = value.replace("\\", "\\\\").replace("'", "''")
-    return "'" + escaped + "'"
+# Replacement for an embedded single quote in a single-quoted SQL string.
+# Snowflake doubles the quote; BigQuery has no '' doubling (it concatenates
+# adjacent string literals, silently dropping the quote) so it backslash-escapes.
+_QUOTE_ESCAPE_SNOWFLAKE = "''"
+_QUOTE_ESCAPE_BIGQUERY = "\\'"
+
+
+def _escape_string_body(value: str, quote_escape: str) -> str:
+    """Escape a Python str into the body of a single-quoted SQL literal.
+
+    ``quote_escape`` is the replacement for an embedded single quote:
+    ``"''"`` for Snowflake (quote doubling) or ``"\\'"`` for BigQuery.
+    BigQuery has no ``''`` doubling — it treats ``'a''b'`` as two adjacent
+    string literals and concatenates them (``ab``), silently dropping the
+    quote — so it must use a backslash escape. Backslash is doubled for both
+    dialects (both process backslash escape sequences in string literals).
+    """
+    return value.replace("\\", "\\\\").replace("'", quote_escape)
+
+
+def _make_string_emitter(quote_escape: str) -> Callable[[object], str]:
+    def emit(value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError(
+                f"literal(type='STRING') expects str, "
+                f"got {type(value).__name__}: {value!r}"
+            )
+        if "\x00" in value:
+            raise ValueError(
+                "String literal contains NUL character, which neither "
+                "Snowflake nor BigQuery accept"
+            )
+        return "'" + _escape_string_body(value, quote_escape) + "'"
+
+    return emit
+
+
+_emit_string_snowflake = _make_string_emitter(_QUOTE_ESCAPE_SNOWFLAKE)
+_emit_string_bigquery = _make_string_emitter(_QUOTE_ESCAPE_BIGQUERY)
 
 
 def _emit_int_snowflake(value: object) -> str:
@@ -311,14 +338,16 @@ def _emit_bytes_bigquery(value: object) -> str:
     return f"b'{escaped}'"
 
 
-def _coerce_json_body(value: object, type_label: str) -> str:
+def _coerce_json_body(
+    value: object, type_label: str, quote_escape: str = "''"
+) -> str:
     try:
         body = json.dumps(value)
     except TypeError as e:
         raise TypeError(
             f"literal(type={type_label!r}): value is not JSON-serializable: {e}"
         ) from e
-    return body.replace("'", "''")
+    return body.replace("'", quote_escape)
 
 
 def _emit_variant_snowflake(value: object) -> str:
@@ -326,16 +355,17 @@ def _emit_variant_snowflake(value: object) -> str:
 
 
 def _emit_json_bigquery(value: object) -> str:
-    return f"JSON '{_coerce_json_body(value, 'JSON')}'"
+    body = _coerce_json_body(value, "JSON", _QUOTE_ESCAPE_BIGQUERY)
+    return f"JSON '{body}'"
 
 
-def _coerce_wkt(value: object, type_label: str) -> str:
+def _coerce_wkt(value: object, type_label: str, quote_escape: str = "''") -> str:
     if not isinstance(value, str):
         raise TypeError(
             f"literal(type={type_label!r}) expects WKT str, "
             f"got {type(value).__name__}: {value!r}"
         )
-    return value.replace("'", "''")
+    return value.replace("'", quote_escape)
 
 
 def _emit_geography_snowflake(value: object) -> str:
@@ -347,13 +377,18 @@ def _emit_geometry_snowflake(value: object) -> str:
 
 
 def _emit_geography_bigquery(value: object) -> str:
-    return f"ST_GEOGFROMTEXT('{_coerce_wkt(value, 'GEOGRAPHY')}')"
+    wkt = _coerce_wkt(value, "GEOGRAPHY", _QUOTE_ESCAPE_BIGQUERY)
+    return f"ST_GEOGFROMTEXT('{wkt}')"
 
 
 _SNOWFLAKE_AMBIGUOUS: set[str] = {"TIMESTAMP"}
 
 _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
-    "STRING": (("VARCHAR", "CHAR", "CHARACTER", "TEXT"), "str", _emit_string),
+    "STRING": (
+        ("VARCHAR", "CHAR", "CHARACTER", "TEXT"),
+        "str",
+        _emit_string_snowflake,
+    ),
     "INT": (
         ("INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"),
         "int",
@@ -377,7 +412,7 @@ _SNOWFLAKE_TYPES: dict[str, _DispatchEntry] = {
 }
 
 _BIGQUERY_TYPES: dict[str, _DispatchEntry] = {
-    "STRING": ((), "str", _emit_string),
+    "STRING": ((), "str", _emit_string_bigquery),
     "INT64": (
         ("INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"),
         "int",
