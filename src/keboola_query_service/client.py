@@ -4,7 +4,7 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Generator, Iterator
 from typing import Any, cast
 
 import httpx
@@ -69,6 +69,7 @@ class Client:
     DEFAULT_POLL_INTERVAL_START = 0.1  # 100ms
     DEFAULT_POLL_INTERVAL_MAX = 2.0  # 2s
     DEFAULT_MAX_WAIT_TIME = 300.0  # 5 minutes
+    DEFAULT_EXECUTE_QUERY_PAGE_SIZE = 5000
 
     def __init__(
         self,
@@ -625,6 +626,154 @@ class Client:
             await asyncio.sleep(poll_interval)
             poll_interval = min(poll_interval * 1.5, poll_interval_max)
 
+    def _iter_result_pages(
+        self,
+        query_job_id: str,
+        statement_id: str,
+        page_size: int,
+        max_rows: int | None,
+    ) -> Generator[QueryResult, None, None]:
+        """Yield result pages one at a time for a statement."""
+        offset = 0
+        total_fetched = 0
+        number_of_rows: int | None = None
+
+        while True:
+            remaining = max_rows - total_fetched if max_rows is not None else None
+            if remaining is not None and remaining <= 0:
+                break
+
+            current_page_size = (
+                min(page_size, remaining) if remaining is not None else page_size
+            )
+
+            page = self.get_job_results(
+                query_job_id,
+                statement_id,
+                offset=offset,
+                page_size=current_page_size,
+            )
+
+            if number_of_rows is None:
+                number_of_rows = page.number_of_rows
+
+            yield page
+
+            total_fetched += len(page.data)
+
+            if len(page.data) < current_page_size:
+                break
+
+            offset += len(page.data)
+
+            if number_of_rows is not None and total_fetched >= number_of_rows:
+                break
+
+    async def _iter_result_pages_async(
+        self,
+        query_job_id: str,
+        statement_id: str,
+        page_size: int,
+        max_rows: int | None,
+    ) -> AsyncIterator[QueryResult]:
+        """Yield result pages one at a time for a statement (async version)."""
+        offset = 0
+        total_fetched = 0
+        number_of_rows: int | None = None
+
+        while True:
+            remaining = max_rows - total_fetched if max_rows is not None else None
+            if remaining is not None and remaining <= 0:
+                break
+
+            current_page_size = (
+                min(page_size, remaining) if remaining is not None else page_size
+            )
+
+            page = await self.get_job_results_async(
+                query_job_id,
+                statement_id,
+                offset=offset,
+                page_size=current_page_size,
+            )
+
+            if number_of_rows is None:
+                number_of_rows = page.number_of_rows
+
+            yield page
+
+            total_fetched += len(page.data)
+
+            if len(page.data) < current_page_size:
+                break
+
+            offset += len(page.data)
+
+            if number_of_rows is not None and total_fetched >= number_of_rows:
+                break
+
+    @staticmethod
+    def _merge_result_pages(pages: Iterator[QueryResult]) -> QueryResult:
+        """Merge multiple result pages into a single QueryResult."""
+        first_page: QueryResult | None = None
+        all_data: list[list[Any]] = []
+
+        for page in pages:
+            if first_page is None:
+                first_page = page
+            all_data.extend(page.data)
+
+        if first_page is None:
+            raise QueryServiceError("No result pages returned")
+
+        return QueryResult(
+            status=first_page.status,
+            columns=first_page.columns,
+            data=all_data,
+            rows_affected=first_page.rows_affected,
+            number_of_rows=first_page.number_of_rows,
+            message=first_page.message,
+        )
+
+    @staticmethod
+    async def _merge_result_pages_async(
+        pages: AsyncIterator[QueryResult],
+    ) -> QueryResult:
+        """Merge multiple result pages into a single QueryResult (async version)."""
+        first_page: QueryResult | None = None
+        all_data: list[list[Any]] = []
+
+        async for page in pages:
+            if first_page is None:
+                first_page = page
+            all_data.extend(page.data)
+
+        if first_page is None:
+            raise QueryServiceError("No result pages returned")
+
+        return QueryResult(
+            status=first_page.status,
+            columns=first_page.columns,
+            data=all_data,
+            rows_affected=first_page.rows_affected,
+            number_of_rows=first_page.number_of_rows,
+            message=first_page.message,
+        )
+
+    @staticmethod
+    def _validate_pagination_options(page_size: int, max_rows: int | None) -> None:
+        """Validate pagination options."""
+        if (
+            isinstance(page_size, bool)
+            or not isinstance(page_size, int)
+            or page_size <= 0
+        ):
+            raise ValidationError("page_size must be a positive integer")
+        if max_rows is not None and (
+            isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows <= 0
+        ):
+            raise ValidationError("max_rows must be a positive integer")
+
     def execute_query(
         self,
         branch_id: str,
@@ -636,11 +785,15 @@ class Client:
         max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
         session_id: str | None = None,
         refresh_metadata_on_success: bool = False,
+        page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
+        max_rows: int | None = None,
     ) -> list[QueryResult]:
         """Execute query and wait for results.
 
         This is a convenience method that submits a job, waits for completion,
-        and fetches results for all statements.
+        and fetches results for all statements. Results are auto-paginated so
+        that result sets larger than ``page_size`` are returned in full rather
+        than silently truncated.
 
         Args:
             branch_id: Branch ID
@@ -652,6 +805,8 @@ class Client:
             session_id: Optional session ID to reuse a Snowflake session across calls
             refresh_metadata_on_success: Whether to refresh workspace
                 metadata after successful execution
+            page_size: Internal page size for fetching results (default 5000)
+            max_rows: Optional cap on the number of rows fetched per statement
 
         Returns:
             List of QueryResult, one per statement
@@ -659,7 +814,10 @@ class Client:
         Raises:
             JobError: If job fails
             JobTimeoutError: If job doesn't complete in time
+            ValidationError: If page_size or max_rows are invalid
         """
+        self._validate_pagination_options(page_size, max_rows)
+
         # Submit job
         job_id = self.submit_job(
             branch_id=branch_id,
@@ -674,11 +832,11 @@ class Client:
         # Wait for completion
         status = self.wait_for_job(job_id, max_wait_time=max_wait_time)
 
-        # Fetch results for each statement
+        # Fetch results for each statement, auto-paginating across pages
         results = []
         for statement in status.statements:
-            result = self.get_job_results(job_id, statement.id)
-            results.append(result)
+            pages = self._iter_result_pages(job_id, statement.id, page_size, max_rows)
+            results.append(self._merge_result_pages(pages))
 
         return results
 
@@ -693,8 +851,12 @@ class Client:
         max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
         session_id: str | None = None,
         refresh_metadata_on_success: bool = False,
+        page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
+        max_rows: int | None = None,
     ) -> list[QueryResult]:
         """Execute query and wait for results (async version)."""
+        self._validate_pagination_options(page_size, max_rows)
+
         # Submit job
         job_id = await self.submit_job_async(
             branch_id=branch_id,
@@ -709,13 +871,117 @@ class Client:
         # Wait for completion
         status = await self.wait_for_job_async(job_id, max_wait_time=max_wait_time)
 
-        # Fetch results for each statement
+        # Fetch results for each statement, auto-paginating across pages
         results = []
         for statement in status.statements:
-            result = await self.get_job_results_async(job_id, statement.id)
-            results.append(result)
+            pages = self._iter_result_pages_async(
+                job_id, statement.id, page_size, max_rows
+            )
+            results.append(await self._merge_result_pages_async(pages))
 
         return results
+
+    def execute_query_iter(
+        self,
+        branch_id: str,
+        workspace_id: str,
+        statements: list[str],
+        *,
+        transactional: bool = True,
+        actor_type: ActorType = ActorType.USER,
+        max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
+        session_id: str | None = None,
+        refresh_metadata_on_success: bool = False,
+        page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
+        max_rows: int | None = None,
+    ) -> Generator[QueryResult, None, None]:
+        """Execute query and yield result pages lazily.
+
+        Like :meth:`execute_query`, but yields one :class:`QueryResult` per
+        page instead of materializing all rows in memory.  Each yielded page
+        corresponds to one API response.
+
+        ``max_rows`` defaults to ``None`` (no cap) because pages are not
+        accumulated, so memory stays bounded.
+
+        Args:
+            branch_id: Branch ID
+            workspace_id: Workspace ID
+            statements: List of SQL statements to execute
+            transactional: Whether to execute in a transaction
+            actor_type: Actor type
+            max_wait_time: Maximum time to wait for completion
+            session_id: Optional session ID to reuse a Snowflake session
+            refresh_metadata_on_success: Whether to refresh workspace
+                metadata after successful execution
+            page_size: Internal page size for fetching results (default 5000)
+            max_rows: Optional cap on total rows fetched per statement.
+                Defaults to ``None`` (no limit).
+
+        Yields:
+            QueryResult pages, one per API response, for each statement
+
+        Raises:
+            JobError: If job fails
+            JobTimeoutError: If job doesn't complete in time
+            ValidationError: If page_size or max_rows are invalid
+        """
+        self._validate_pagination_options(page_size, max_rows)
+
+        job_id = self.submit_job(
+            branch_id=branch_id,
+            workspace_id=workspace_id,
+            statements=statements,
+            transactional=transactional,
+            actor_type=actor_type,
+            session_id=session_id,
+            refresh_metadata_on_success=refresh_metadata_on_success,
+        )
+
+        status = self.wait_for_job(job_id, max_wait_time=max_wait_time)
+
+        for statement in status.statements:
+            yield from self._iter_result_pages(
+                job_id, statement.id, page_size, max_rows
+            )
+
+    async def execute_query_iter_async(
+        self,
+        branch_id: str,
+        workspace_id: str,
+        statements: list[str],
+        *,
+        transactional: bool = True,
+        actor_type: ActorType = ActorType.USER,
+        max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
+        session_id: str | None = None,
+        refresh_metadata_on_success: bool = False,
+        page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
+        max_rows: int | None = None,
+    ) -> AsyncIterator[QueryResult]:
+        """Execute query and yield result pages lazily (async version).
+
+        See :meth:`execute_query_iter` for details.
+        """
+        self._validate_pagination_options(page_size, max_rows)
+
+        job_id = await self.submit_job_async(
+            branch_id=branch_id,
+            workspace_id=workspace_id,
+            statements=statements,
+            transactional=transactional,
+            actor_type=actor_type,
+            session_id=session_id,
+            refresh_metadata_on_success=refresh_metadata_on_success,
+        )
+
+        status = await self.wait_for_job_async(job_id, max_wait_time=max_wait_time)
+
+        for statement in status.statements:
+            async for page in self._iter_result_pages_async(
+                job_id, statement.id, page_size, max_rows
+            ):
+                yield page
 
     def stream_results(
         self,

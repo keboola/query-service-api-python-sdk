@@ -48,6 +48,7 @@ client.close()
 ## Features
 
 - **Sync and async support** - Both synchronous and async (asyncio) APIs
+- **Auto-pagination** - `execute_query` fetches all result pages automatically instead of silently truncating at the API's default page size
 - **Automatic retries** - Configurable retry logic for transient failures
 - **Job polling** - Built-in exponential backoff for waiting on job completion
 - **Streaming** - NDJSON streaming for large result sets
@@ -136,6 +137,45 @@ final_status = client.wait_for_job(job_id, max_wait_time=300)
 result = client.get_job_results(job_id, final_status.statements[0].id)
 ```
 
+### Pagination Control
+
+`execute_query` auto-paginates results by default, fetching all rows across
+multiple API pages. You can tune the internal page size and cap the total
+number of rows returned per statement:
+
+```python
+results = client.execute_query(
+    branch_id="123",
+    workspace_id="456",
+    statements=["SELECT * FROM large_table"],
+    page_size=1000,   # Internal fetch page size (default 5000)
+    max_rows=10000,   # Stop after this many rows per statement
+)
+```
+
+For the low-level `get_job_results` method, pagination must be handled
+manually using `offset` and `page_size` parameters.
+
+### Lazy Iteration (Memory-Efficient)
+
+For large result sets, use `execute_query_iter` to process pages one at a
+time without loading everything into memory:
+
+```python
+# Yields one QueryResult per page — memory stays bounded
+for page in client.execute_query_iter(
+    branch_id="123",
+    workspace_id="456",
+    statements=["SELECT * FROM huge_table"],
+):
+    for row in page.data:
+        process_row(row)
+```
+
+`execute_query_iter` defaults to **no row cap** (`max_rows=None`) because
+pages are not accumulated in memory.  An async variant
+`execute_query_iter_async` is also available.
+
 ### Streaming Large Results
 
 ```python
@@ -201,7 +241,8 @@ client = Client(
 
 | Method | Description |
 |--------|-------------|
-| `execute_query()` | Submit query, wait for completion, return results |
+| `execute_query()` | Submit query, wait for completion, return all results (auto-paginated) |
+| `execute_query_iter()` | Like `execute_query()` but yields pages lazily (memory-efficient, no default row cap) |
 | `submit_job()` | Submit query job without waiting |
 | `get_job_status()` | Get current job status |
 | `get_job_results()` | Get results for a statement |
