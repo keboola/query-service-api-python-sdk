@@ -1,3 +1,3 @@
 """Version information for Keboola Query Service SDK."""
 
-__version__ = "0.1.7"
+__version__ = "0.3.0"
