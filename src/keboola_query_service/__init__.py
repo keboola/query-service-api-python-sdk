@@ -130,6 +130,7 @@ from .models import (
     Statement,
     StatementState,
 )
+from .sql import SQL, Dialect, SafeSql
 
 __all__ = [
     "__version__",
@@ -148,4 +149,7 @@ __all__ = [
     "NotFoundError",
     "JobError",
     "JobTimeoutError",
+    "SQL",
+    "SafeSql",
+    "Dialect",
 ]
