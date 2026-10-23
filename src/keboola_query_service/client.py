@@ -11,11 +11,13 @@ import httpx
 
 from ._version import __version__
 from .exceptions import (
+    ROW_LEVEL_SECURITY_DENIED_MESSAGE,
     AuthenticationError,
     JobError,
     JobTimeoutError,
     NotFoundError,
     QueryServiceError,
+    RowLevelSecurityError,
     ValidationError,
 )
 from .models import (
@@ -27,6 +29,8 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+RLS_MODE_HEADER = "X-KBC-RLS-Mode"
 
 
 class Client:
@@ -164,10 +168,12 @@ class Client:
         """Handle error responses."""
         try:
             error_data = response.json()
+            exception = error_data.get("exception")
             message = error_data.get("exception", response.text)
             exception_id = error_data.get("exceptionId")
             context = error_data.get("context")
         except Exception:
+            exception = None
             message = response.text
             exception_id = None
             context = None
@@ -179,7 +185,13 @@ class Client:
             "context": context,
         }
 
-        if response.status_code == 401:
+        if (
+            response.status_code == 403
+            and response.headers.get(RLS_MODE_HEADER) == "enforce"
+            and exception == ROW_LEVEL_SECURITY_DENIED_MESSAGE
+        ):
+            raise RowLevelSecurityError(**kwargs)
+        elif response.status_code == 401:
             raise AuthenticationError(**kwargs)
         elif response.status_code == 400:
             raise ValidationError(**kwargs)

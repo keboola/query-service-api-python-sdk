@@ -108,16 +108,19 @@ Exceptions
 - ``NotFoundError`` - Resource not found (404)
 - ``JobError`` - Query execution failed
 - ``JobTimeoutError`` - Job didn't complete in time
+- ``RowLevelSecurityError`` - Row-level security refused the query (403)
 """
 
 from ._version import __version__
 from .client import Client
 from .exceptions import (
+    ROW_LEVEL_SECURITY_DENIED_MESSAGE,
     AuthenticationError,
     JobError,
     JobTimeoutError,
     NotFoundError,
     QueryServiceError,
+    RowLevelSecurityError,
     ValidationError,
 )
 from .models import (
@@ -148,4 +151,6 @@ __all__ = [
     "NotFoundError",
     "JobError",
     "JobTimeoutError",
+    "RowLevelSecurityError",
+    "ROW_LEVEL_SECURITY_DENIED_MESSAGE",
 ]

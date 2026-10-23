@@ -67,3 +67,15 @@ class JobTimeoutError(QueryServiceError):
     def __init__(self, message: str, job_id: str, **kwargs: Any):
         super().__init__(message, **kwargs)
         self.job_id = job_id
+
+
+ROW_LEVEL_SECURITY_DENIED_MESSAGE = "Row-level security does not allow this query"
+
+
+class RowLevelSecurityError(QueryServiceError):
+    """Raised when row-level security refuses a query on a governed workspace (403).
+
+    The refusal does not say whether a policy is missing or the access is denied.
+    """
+
+    pass
