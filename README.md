@@ -209,6 +209,62 @@ except TimeoutError as e:
     print(f"Job {e.job_id} timed out")
 ```
 
+### Data Apps: Forwarding the App User Token
+
+A data app behind the Keboola apps proxy receives the signed-in user in the
+`X-Kbc-App-User-Token` request header. Forward it on every Query Service call
+you make for that request. Query Service then applies row-level security for
+that user. Without the token, a governed workspace refuses the query.
+
+Keep one shared client and pass the token per call. Never store it on the shared
+client, because the client serves all users.
+
+```python
+import streamlit as st
+from keboola_query_service import (
+    Client,
+    RowLevelSecurityError,
+    user_token_from_headers,
+)
+
+@st.cache_resource
+def get_client() -> Client:
+    return Client(base_url="https://query.keboola.com", token="your-token")
+
+user_token = user_token_from_headers(st.context.headers)
+
+try:
+    results = get_client().execute_query(
+        branch_id="123",
+        workspace_id="456",
+        statements=["SELECT * FROM orders"],
+        user_token=user_token,
+    )
+except RowLevelSecurityError:
+    st.error("You do not have access to this data.")
+```
+
+`client.with_user_token(token)` returns a client for one user. It shares the
+connections of the shared client, and closing it does not close them:
+
+```python
+from fastapi import Request
+
+@app.get("/orders")
+def orders(request: Request):
+    user_client = client.with_user_token(user_token_from_headers(request.headers))
+    return user_client.execute_query(...)
+```
+
+- `user_token_from_headers()` accepts any mapping (Streamlit `st.context.headers`,
+  Starlette/FastAPI `request.headers`, a dict). The name is case-insensitive.
+  A missing or empty header gives `None`.
+- No token (`None` or empty) sends no header, so the call works as before.
+- `RowLevelSecurityError` is a `QueryServiceError` (status 403). The SDK raises
+  it only for the row-level security refusal of a governed workspace. Other 403
+  errors stay `QueryServiceError`.
+- A server-side cache of query results must be keyed by the user.
+
 ### Query History
 
 ```python
@@ -251,7 +307,9 @@ client = Client(
 | `get_query_history()` | Get query history for workspace |
 | `stream_results()` | Stream results as NDJSON |
 
-All methods have async variants with `_async` suffix.
+All methods have async variants with `_async` suffix, and all accept
+`user_token=`. `with_user_token(token)` returns a client that sends the token
+on every call.
 
 ### Models
 
