@@ -30,6 +30,7 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+APP_USER_TOKEN_HEADER = "X-Kbc-App-User-Token"
 RLS_MODE_HEADER = "X-KBC-RLS-Mode"
 
 
@@ -106,6 +107,11 @@ class Client:
             timeout=httpx.Timeout(timeout, connect=connect_timeout),
         )
         self._async_client: httpx.AsyncClient | None = None
+        self._user_token: str | None = None
+
+    def _user_token_headers(self, user_token: str | None) -> dict[str, str]:
+        token = self._user_token if user_token is None else user_token
+        return {APP_USER_TOKEN_HEADER: token} if token else {}
 
     def _build_headers(self, user_agent: str | None) -> dict[str, str]:
         """Build request headers."""
@@ -204,9 +210,12 @@ class Client:
         self,
         method: str,
         path: str,
+        *,
+        user_token: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Make an HTTP request with retry logic."""
+        kwargs["headers"] = self._user_token_headers(user_token)
         last_exception: Exception | None = None
         last_response: httpx.Response | None = None
 
@@ -268,10 +277,13 @@ class Client:
         self,
         method: str,
         path: str,
+        *,
+        user_token: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Make an async HTTP request with retry logic."""
         client = self._get_async_client()
+        kwargs["headers"] = self._user_token_headers(user_token)
         last_exception: Exception | None = None
         last_response: httpx.Response | None = None
 
@@ -343,6 +355,7 @@ class Client:
         actor_type: ActorType = ActorType.USER,
         session_id: str | None = None,
         refresh_metadata_on_success: bool = False,
+        user_token: str | None = None,
     ) -> str:
         """Submit a query job without waiting for completion.
 
@@ -355,6 +368,7 @@ class Client:
             session_id: Optional session ID to reuse a Snowflake session across calls
             refresh_metadata_on_success: Whether to refresh workspace
                 metadata after successful execution
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Returns:
             Query job ID
@@ -372,6 +386,7 @@ class Client:
             "POST",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
             json=body,
+            user_token=user_token,
         )
         return str(data["queryJobId"])
 
@@ -385,6 +400,7 @@ class Client:
         actor_type: ActorType = ActorType.USER,
         session_id: str | None = None,
         refresh_metadata_on_success: bool = False,
+        user_token: str | None = None,
     ) -> str:
         """Submit a query job without waiting (async version)."""
         body: dict[str, object] = {
@@ -400,24 +416,34 @@ class Client:
             "POST",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
             json=body,
+            user_token=user_token,
         )
         return str(data["queryJobId"])
 
-    def get_job_status(self, query_job_id: str) -> JobStatus:
+    def get_job_status(
+        self, query_job_id: str, *, user_token: str | None = None
+    ) -> JobStatus:
         """Get the status of a query job.
 
         Args:
             query_job_id: Query job ID
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Returns:
             JobStatus with current state and statements
         """
-        data = self._request("GET", f"/api/v1/queries/{query_job_id}")
+        data = self._request(
+            "GET", f"/api/v1/queries/{query_job_id}", user_token=user_token
+        )
         return JobStatus.from_dict(data)
 
-    async def get_job_status_async(self, query_job_id: str) -> JobStatus:
+    async def get_job_status_async(
+        self, query_job_id: str, *, user_token: str | None = None
+    ) -> JobStatus:
         """Get the status of a query job (async version)."""
-        data = await self._request_async("GET", f"/api/v1/queries/{query_job_id}")
+        data = await self._request_async(
+            "GET", f"/api/v1/queries/{query_job_id}", user_token=user_token
+        )
         return JobStatus.from_dict(data)
 
     def get_job_results(
@@ -427,6 +453,7 @@ class Client:
         *,
         offset: int = 0,
         page_size: int = 500,
+        user_token: str | None = None,
     ) -> QueryResult:
         """Get results for a specific statement.
 
@@ -435,6 +462,7 @@ class Client:
             statement_id: Statement ID
             offset: Offset for pagination
             page_size: Page size for pagination
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Returns:
             QueryResult with columns and data
@@ -443,6 +471,7 @@ class Client:
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results",
             params={"offset": offset, "pageSize": page_size},
+            user_token=user_token,
         )
         return QueryResult.from_dict(data)
 
@@ -453,12 +482,14 @@ class Client:
         *,
         offset: int = 0,
         page_size: int = 500,
+        user_token: str | None = None,
     ) -> QueryResult:
         """Get results for a specific statement (async version)."""
         data = await self._request_async(
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results",
             params={"offset": offset, "pageSize": page_size},
+            user_token=user_token,
         )
         return QueryResult.from_dict(data)
 
@@ -466,12 +497,15 @@ class Client:
         self,
         query_job_id: str,
         reason: str | None = None,
+        *,
+        user_token: str | None = None,
     ) -> str:
         """Cancel a running query job.
 
         Args:
             query_job_id: Query job ID
             reason: Optional cancellation reason
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Returns:
             Query job ID
@@ -480,6 +514,7 @@ class Client:
             "POST",
             f"/api/v1/queries/{query_job_id}/cancel",
             json={"reason": reason or "Canceled by user"},
+            user_token=user_token,
         )
         return str(data["queryJobId"])
 
@@ -487,12 +522,15 @@ class Client:
         self,
         query_job_id: str,
         reason: str | None = None,
+        *,
+        user_token: str | None = None,
     ) -> str:
         """Cancel a running query job (async version)."""
         data = await self._request_async(
             "POST",
             f"/api/v1/queries/{query_job_id}/cancel",
             json={"reason": reason or "Canceled by user"},
+            user_token=user_token,
         )
         return str(data["queryJobId"])
 
@@ -503,6 +541,7 @@ class Client:
         *,
         after_id: str | None = None,
         page_size: int = 500,
+        user_token: str | None = None,
     ) -> QueryHistory:
         """Get query history for a workspace.
 
@@ -511,6 +550,7 @@ class Client:
             workspace_id: Workspace ID
             after_id: Get results after this statement ID
             page_size: Number of results per page
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Returns:
             QueryHistory with list of statements
@@ -523,6 +563,7 @@ class Client:
             "GET",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
             params=params,
+            user_token=user_token,
         )
         return QueryHistory.from_dict(data)
 
@@ -533,6 +574,7 @@ class Client:
         *,
         after_id: str | None = None,
         page_size: int = 500,
+        user_token: str | None = None,
     ) -> QueryHistory:
         """Get query history for a workspace (async version)."""
         params: dict[str, Any] = {"pageSize": page_size}
@@ -543,6 +585,7 @@ class Client:
             "GET",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
             params=params,
+            user_token=user_token,
         )
         return QueryHistory.from_dict(data)
 
@@ -557,6 +600,7 @@ class Client:
         max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
         poll_interval_start: float = DEFAULT_POLL_INTERVAL_START,
         poll_interval_max: float = DEFAULT_POLL_INTERVAL_MAX,
+        user_token: str | None = None,
     ) -> JobStatus:
         """Wait for a job to complete.
 
@@ -565,6 +609,7 @@ class Client:
             max_wait_time: Maximum time to wait in seconds
             poll_interval_start: Initial polling interval
             poll_interval_max: Maximum polling interval
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Returns:
             Final JobStatus
@@ -577,7 +622,7 @@ class Client:
         poll_interval = poll_interval_start
 
         while True:
-            status = self.get_job_status(query_job_id)
+            status = self.get_job_status(query_job_id, user_token=user_token)
 
             if status.status.is_terminal():
                 if status.status == JobState.FAILED:
@@ -608,13 +653,16 @@ class Client:
         max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
         poll_interval_start: float = DEFAULT_POLL_INTERVAL_START,
         poll_interval_max: float = DEFAULT_POLL_INTERVAL_MAX,
+        user_token: str | None = None,
     ) -> JobStatus:
         """Wait for a job to complete (async version)."""
         start_time = time.time()
         poll_interval = poll_interval_start
 
         while True:
-            status = await self.get_job_status_async(query_job_id)
+            status = await self.get_job_status_async(
+                query_job_id, user_token=user_token
+            )
 
             if status.status.is_terminal():
                 if status.status == JobState.FAILED:
@@ -644,6 +692,7 @@ class Client:
         statement_id: str,
         page_size: int,
         max_rows: int | None,
+        user_token: str | None,
     ) -> Generator[QueryResult, None, None]:
         """Yield result pages one at a time for a statement."""
         offset = 0
@@ -664,6 +713,7 @@ class Client:
                 statement_id,
                 offset=offset,
                 page_size=current_page_size,
+                user_token=user_token,
             )
 
             if number_of_rows is None:
@@ -687,6 +737,7 @@ class Client:
         statement_id: str,
         page_size: int,
         max_rows: int | None,
+        user_token: str | None,
     ) -> AsyncIterator[QueryResult]:
         """Yield result pages one at a time for a statement (async version)."""
         offset = 0
@@ -707,6 +758,7 @@ class Client:
                 statement_id,
                 offset=offset,
                 page_size=current_page_size,
+                user_token=user_token,
             )
 
             if number_of_rows is None:
@@ -799,6 +851,7 @@ class Client:
         refresh_metadata_on_success: bool = False,
         page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
         max_rows: int | None = None,
+        user_token: str | None = None,
     ) -> list[QueryResult]:
         """Execute query and wait for results.
 
@@ -819,6 +872,7 @@ class Client:
                 metadata after successful execution
             page_size: Internal page size for fetching results (default 5000)
             max_rows: Optional cap on the number of rows fetched per statement
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Returns:
             List of QueryResult, one per statement
@@ -839,15 +893,20 @@ class Client:
             actor_type=actor_type,
             session_id=session_id,
             refresh_metadata_on_success=refresh_metadata_on_success,
+            user_token=user_token,
         )
 
         # Wait for completion
-        status = self.wait_for_job(job_id, max_wait_time=max_wait_time)
+        status = self.wait_for_job(
+            job_id, max_wait_time=max_wait_time, user_token=user_token
+        )
 
         # Fetch results for each statement, auto-paginating across pages
         results = []
         for statement in status.statements:
-            pages = self._iter_result_pages(job_id, statement.id, page_size, max_rows)
+            pages = self._iter_result_pages(
+                job_id, statement.id, page_size, max_rows, user_token
+            )
             results.append(self._merge_result_pages(pages))
 
         return results
@@ -865,6 +924,7 @@ class Client:
         refresh_metadata_on_success: bool = False,
         page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
         max_rows: int | None = None,
+        user_token: str | None = None,
     ) -> list[QueryResult]:
         """Execute query and wait for results (async version)."""
         self._validate_pagination_options(page_size, max_rows)
@@ -878,16 +938,19 @@ class Client:
             actor_type=actor_type,
             session_id=session_id,
             refresh_metadata_on_success=refresh_metadata_on_success,
+            user_token=user_token,
         )
 
         # Wait for completion
-        status = await self.wait_for_job_async(job_id, max_wait_time=max_wait_time)
+        status = await self.wait_for_job_async(
+            job_id, max_wait_time=max_wait_time, user_token=user_token
+        )
 
         # Fetch results for each statement, auto-paginating across pages
         results = []
         for statement in status.statements:
             pages = self._iter_result_pages_async(
-                job_id, statement.id, page_size, max_rows
+                job_id, statement.id, page_size, max_rows, user_token
             )
             results.append(await self._merge_result_pages_async(pages))
 
@@ -906,6 +969,7 @@ class Client:
         refresh_metadata_on_success: bool = False,
         page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
         max_rows: int | None = None,
+        user_token: str | None = None,
     ) -> Generator[QueryResult, None, None]:
         """Execute query and yield result pages lazily.
 
@@ -929,6 +993,7 @@ class Client:
             page_size: Internal page size for fetching results (default 5000)
             max_rows: Optional cap on total rows fetched per statement.
                 Defaults to ``None`` (no limit).
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Yields:
             QueryResult pages, one per API response, for each statement
@@ -948,13 +1013,16 @@ class Client:
             actor_type=actor_type,
             session_id=session_id,
             refresh_metadata_on_success=refresh_metadata_on_success,
+            user_token=user_token,
         )
 
-        status = self.wait_for_job(job_id, max_wait_time=max_wait_time)
+        status = self.wait_for_job(
+            job_id, max_wait_time=max_wait_time, user_token=user_token
+        )
 
         for statement in status.statements:
             yield from self._iter_result_pages(
-                job_id, statement.id, page_size, max_rows
+                job_id, statement.id, page_size, max_rows, user_token
             )
 
     async def execute_query_iter_async(
@@ -970,6 +1038,7 @@ class Client:
         refresh_metadata_on_success: bool = False,
         page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
         max_rows: int | None = None,
+        user_token: str | None = None,
     ) -> AsyncIterator[QueryResult]:
         """Execute query and yield result pages lazily (async version).
 
@@ -985,13 +1054,16 @@ class Client:
             actor_type=actor_type,
             session_id=session_id,
             refresh_metadata_on_success=refresh_metadata_on_success,
+            user_token=user_token,
         )
 
-        status = await self.wait_for_job_async(job_id, max_wait_time=max_wait_time)
+        status = await self.wait_for_job_async(
+            job_id, max_wait_time=max_wait_time, user_token=user_token
+        )
 
         for statement in status.statements:
             async for page in self._iter_result_pages_async(
-                job_id, statement.id, page_size, max_rows
+                job_id, statement.id, page_size, max_rows, user_token
             ):
                 yield page
 
@@ -999,12 +1071,15 @@ class Client:
         self,
         query_job_id: str,
         statement_id: str,
+        *,
+        user_token: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Stream results as NDJSON.
 
         Args:
             query_job_id: Query job ID
             statement_id: Statement ID
+            user_token: Optional app user token for the X-Kbc-App-User-Token header
 
         Yields:
             Parsed JSON objects from the NDJSON stream
@@ -1012,6 +1087,7 @@ class Client:
         with self._client.stream(
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results/stream",
+            headers=self._user_token_headers(user_token),
         ) as response:
             if response.status_code >= 400:
                 # Read full response for error handling
@@ -1028,6 +1104,8 @@ class Client:
         self,
         query_job_id: str,
         statement_id: str,
+        *,
+        user_token: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream results as NDJSON (async version)."""
         client = self._get_async_client()
@@ -1035,6 +1113,7 @@ class Client:
         async with client.stream(
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results/stream",
+            headers=self._user_token_headers(user_token),
         ) as response:
             if response.status_code >= 400:
                 await response.aread()
