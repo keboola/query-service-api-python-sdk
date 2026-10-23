@@ -1,7 +1,10 @@
 """Tests for forwarding the app user token to the Query Service."""
 
+import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
@@ -263,3 +266,45 @@ class TestTokenIsNotExposed:
 
         assert "Request failed with status 503" in caplog.text
         assert "secret-user-token" not in caplog.text
+
+
+class TestConcurrentUsers:
+    def test_threads_each_send_only_their_token(
+        self, client: Client, query_service: HTTPXMock
+    ):
+        users = [f"user-{i}" for i in range(20)]
+
+        def run(user: str) -> None:
+            client.with_user_token(user).submit_job(
+                branch_id="123", workspace_id="456", statements=[user]
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(run, users))
+
+        for request in query_service.get_requests():
+            assert [request.headers[HEADER]] == json.loads(request.content)[
+                "statements"
+            ]
+        assert len(query_service.get_requests()) == len(users)
+
+    async def test_tasks_each_send_only_their_token(
+        self, client: Client, query_service: HTTPXMock
+    ):
+        users = [f"user-{i}" for i in range(20)]
+
+        await asyncio.gather(
+            *(
+                client.with_user_token(user).submit_job_async(
+                    branch_id="123", workspace_id="456", statements=[user]
+                )
+                for user in users
+            )
+        )
+        await client.close_async()
+
+        for request in query_service.get_requests():
+            assert [request.headers[HEADER]] == json.loads(request.content)[
+                "statements"
+            ]
+        assert len(query_service.get_requests()) == len(users)

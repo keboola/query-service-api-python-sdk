@@ -157,3 +157,16 @@ def test_non_json_body_with_denied_text_stays_plain_query_service_error(
         submit(client)
 
     assert type(exc_info.value) is QueryServiceError
+
+
+def test_refusal_through_user_token_view(client: Client, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="POST",
+        url=SUBMIT_URL,
+        status_code=403,
+        headers={"X-KBC-RLS-Mode": "enforce"},
+        json={"exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE},
+    )
+
+    with pytest.raises(RowLevelSecurityError):
+        submit(client.with_user_token("user-a"))
