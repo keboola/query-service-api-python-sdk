@@ -100,6 +100,10 @@ Classes
 - ``Column`` - Column metadata (name, type)
 - ``Statement`` - Statement execution info
 
+Functions
+---------
+- ``user_token_from_headers`` - Read X-Kbc-App-User-Token from request headers
+
 Exceptions
 ----------
 - ``QueryServiceError`` - Base exception
