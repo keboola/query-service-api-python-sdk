@@ -170,3 +170,20 @@ def test_refusal_through_user_token_view(client: Client, httpx_mock: HTTPXMock):
 
     with pytest.raises(RowLevelSecurityError):
         submit(client.with_user_token("user-a"))
+
+
+async def test_refusal_on_stream_raises_row_level_security_error_async(
+    client: Client, httpx_mock: HTTPXMock
+):
+    httpx_mock.add_response(
+        method="GET",
+        url=STREAM_URL,
+        status_code=403,
+        headers={"X-KBC-RLS-Mode": "enforce"},
+        json={"exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE},
+    )
+
+    with pytest.raises(RowLevelSecurityError):
+        async for _ in client.stream_results_async("job-1", "stmt-1"):
+            pass
+    await client.close_async()
