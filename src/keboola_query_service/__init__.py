@@ -112,7 +112,7 @@ Exceptions
 """
 
 from ._version import __version__
-from .client import Client
+from .client import APP_USER_TOKEN_HEADER, Client, user_token_from_headers
 from .exceptions import (
     ROW_LEVEL_SECURITY_DENIED_MESSAGE,
     AuthenticationError,
@@ -137,6 +137,8 @@ from .models import (
 __all__ = [
     "__version__",
     "Client",
+    "APP_USER_TOKEN_HEADER",
+    "user_token_from_headers",
     "ActorType",
     "JobState",
     "StatementState",

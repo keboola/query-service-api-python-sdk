@@ -5,7 +5,7 @@ import copy
 import logging
 import random
 import time
-from collections.abc import AsyncIterator, Generator, Iterator
+from collections.abc import AsyncIterator, Generator, Iterator, Mapping
 from typing import Any, cast
 
 import httpx
@@ -33,6 +33,20 @@ logger = logging.getLogger(__name__)
 
 APP_USER_TOKEN_HEADER = "X-Kbc-App-User-Token"
 RLS_MODE_HEADER = "X-KBC-RLS-Mode"
+
+
+def user_token_from_headers(headers: Mapping[str, str]) -> str | None:
+    """Return the X-Kbc-App-User-Token value from incoming request headers.
+
+    Accepts any mapping, e.g. Streamlit ``st.context.headers``, Starlette or
+    FastAPI ``request.headers``, or a plain dict. The name is matched
+    case-insensitively. A missing or empty header returns None.
+    """
+    name = APP_USER_TOKEN_HEADER.lower()
+    for key, value in headers.items():
+        if key.lower() == name:
+            return value or None
+    return None
 
 
 class Client:
