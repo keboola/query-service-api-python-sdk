@@ -36,12 +36,19 @@ def test_denied_message_matches_query_service():
     )
 
 
-def test_refusal_raises_row_level_security_error(client: Client, httpx_mock: HTTPXMock):
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"X-KBC-RLS-Mode": "enforce"}],
+    ids=["without-rls-mode-header", "with-rls-mode-header"],
+)
+def test_refusal_raises_row_level_security_error(
+    client: Client, httpx_mock: HTTPXMock, headers: dict[str, str]
+):
     httpx_mock.add_response(
         method="POST",
         url=SUBMIT_URL,
         status_code=403,
-        headers={"X-KBC-RLS-Mode": "enforce"},
+        headers=headers,
         json={
             "error": 403,
             "exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE,
@@ -66,7 +73,6 @@ async def test_refusal_raises_row_level_security_error_async(
         method="POST",
         url=SUBMIT_URL,
         status_code=403,
-        headers={"X-KBC-RLS-Mode": "enforce"},
         json={"exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE},
     )
 
@@ -84,7 +90,6 @@ def test_refusal_on_stream_raises_row_level_security_error(
         method="GET",
         url=STREAM_URL,
         status_code=403,
-        headers={"X-KBC-RLS-Mode": "enforce"},
         json={"exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE},
     )
 
@@ -104,14 +109,14 @@ def test_refusal_on_stream_raises_row_level_security_error(
         pytest.param(
             403,
             {},
-            {"exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE},
-            id="denied-text-without-header",
+            {"exception": "Failed to get workspace credentials"},
+            id="credentials-403-without-header",
         ),
         pytest.param(
-            403,
-            {"X-KBC-RLS-Mode": "off"},
+            409,
+            {},
             {"exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE},
-            id="denied-text-with-other-mode",
+            id="denied-text-on-other-status",
         ),
         pytest.param(
             503,
@@ -164,7 +169,6 @@ def test_refusal_through_user_token_view(client: Client, httpx_mock: HTTPXMock):
         method="POST",
         url=SUBMIT_URL,
         status_code=403,
-        headers={"X-KBC-RLS-Mode": "enforce"},
         json={"exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE},
     )
 
@@ -179,7 +183,6 @@ async def test_refusal_on_stream_raises_row_level_security_error_async(
         method="GET",
         url=STREAM_URL,
         status_code=403,
-        headers={"X-KBC-RLS-Mode": "enforce"},
         json={"exception": ROW_LEVEL_SECURITY_DENIED_MESSAGE},
     )
 

@@ -32,7 +32,6 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 APP_USER_TOKEN_HEADER = "X-Kbc-App-User-Token"
-RLS_MODE_HEADER = "X-KBC-RLS-Mode"
 
 
 def user_token_from_headers(headers: Mapping[str, str]) -> str | None:
@@ -233,7 +232,6 @@ class Client:
 
         if (
             response.status_code == 403
-            and response.headers.get(RLS_MODE_HEADER) == "enforce"
             and exception == ROW_LEVEL_SECURITY_DENIED_MESSAGE
         ):
             raise RowLevelSecurityError(**kwargs)
