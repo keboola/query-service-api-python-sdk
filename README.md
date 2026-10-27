@@ -222,32 +222,91 @@ credentials:
 
 A request always sends the headers of exactly one credential, never two.
 
-```python
-from keboola_query_service import AppUserToken, BearerToken, Client, StorageToken
+`auth=` also takes a **provider**: a callable with no arguments that returns a
+credential. The client calls it before every request, retries included, in the
+sync and the async methods. `execute_query_iter()` and `stream_results()` call
+it when you start reading, not when you call them.
 
-client = Client(base_url="https://query.keboola.com", auth=StorageToken("your-token"))
+#### 1. A static token: scripts, jobs, single-tenant servers
+
+```python
+import os
+
+from keboola_query_service import BearerToken, Client, StorageToken
+
 client = Client(
     base_url="https://query.keboola.com",
-    auth=BearerToken("kbc_pat_...", project_id=123),
+    auth=StorageToken(os.environ["KBC_TOKEN"]),
+)
+
+# A programmatic token (kbc_pat_/kbc_at_) needs the project ID:
+pat_client = Client(
+    base_url="https://query.keboola.com",
+    auth=BearerToken(os.environ["KBC_PAT"], project_id=123),
 )
 ```
 
-**Provider.** `auth=` also takes a callable with no arguments that returns a
-credential. The client calls it before every request, retries included, in sync
-and async methods. `execute_query_iter()` and `stream_results()` call it when
-you start reading, not when you call them. Use it for a token that changes,
-for example one that is read from a file:
+#### 2. A server with a credential for each incoming request
+
+A middleware puts the credential of the request into a `ContextVar`. One shared
+client reads it through a provider. Each request and each retry calls the
+provider, so one shared client is safe for many users at the same time.
+
+This FastAPI example sends the app user token when the request has the
+`X-Kbc-App-User-Token` header, and the server's Storage token when it does not:
 
 ```python
+import os
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+
+from fastapi import FastAPI, Request, Response
+
+from keboola_query_service import AppUserToken, Client, Credential, StorageToken
+
+server_auth = StorageToken(os.environ["KBC_TOKEN"])
+current_auth: ContextVar[Credential] = ContextVar("current_auth", default=server_auth)
+
 client = Client(
-    base_url="https://query.keboola.com",
-    auth=lambda: StorageToken(token_file.read_text().strip()),
+    base_url=os.environ["QUERY_SERVICE_URL"],
+    auth=lambda: current_auth.get(),
 )
+
+app = FastAPI()
+
+
+@app.middleware("http")
+async def set_query_service_auth(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    app_user_token = request.headers.get("X-Kbc-App-User-Token")
+    token = current_auth.set(
+        AppUserToken(app_user_token) if app_user_token else server_auth
+    )
+    try:
+        return await call_next(request)
+    finally:
+        current_auth.reset(token)
+
+
+@app.get("/orders")
+def orders() -> list[list[object]]:
+    results = client.execute_query(
+        branch_id=os.environ["BRANCH_ID"],
+        workspace_id=os.environ["WORKSPACE_ID"],
+        statements=["SELECT * FROM orders"],
+    )
+    return results[0].data
 ```
 
-**Per-call override.** Every method that calls Query Service takes a
-keyword-only `auth=` (a credential or a provider). It replaces the client's
-`auth` for that call only. The client does not store it:
+Code outside a request (start-up code, background jobs) gets the default, the
+server's Storage token.
+
+#### 3. A per-call override
+
+Every method that calls Query Service takes a keyword-only `auth=` (a
+credential or a provider). It replaces the client's `auth` for that one call.
+The client does not store it:
 
 ```python
 results = client.execute_query(

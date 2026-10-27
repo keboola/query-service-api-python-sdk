@@ -1,10 +1,12 @@
 """Tests for the credentials the client sends to the Query Service."""
 
 import asyncio
+import contextvars
 import json
 import logging
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
@@ -329,6 +331,76 @@ class TestProvider:
             client.submit_job(**STATEMENTS)
 
         assert "plain-string" not in str(exc_info.value)
+
+
+class TestRequestScopedProvider:
+    """The README pattern: a ContextVar set per request, one shared client."""
+
+    def _client(self, current: "ContextVar[Credential]") -> Client:
+        return Client(base_url=BASE_URL, auth=lambda: current.get())
+
+    def test_threads_each_send_their_request_credential(self, query_service: HTTPXMock):
+        server_auth = StorageToken("server-token")
+        current: ContextVar[Credential] = ContextVar("current", default=server_auth)
+        client = self._client(current)
+        users = [f"user-{i}" if i % 3 else "" for i in range(30)]
+
+        def handle_request(user: str) -> None:
+            token = current.set(AppUserToken(user) if user else server_auth)
+            try:
+                client.execute_query(
+                    branch_id="123", workspace_id="456", statements=[user]
+                )
+            finally:
+                current.reset(token)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(
+                pool.map(
+                    lambda u: contextvars.copy_context().run(handle_request, u), users
+                )
+            )
+
+        submits = [r for r in query_service.get_requests() if r.method == "POST"]
+        assert len(submits) == len(users)
+        for request in submits:
+            user = json.loads(request.content)["statements"][0]
+            expected = (
+                {"X-Kbc-App-User-Token": user}
+                if user
+                else {"X-StorageAPI-Token": "server-token"}
+            )
+            assert credential_headers(request) == expected
+        assert current.get() is server_auth
+
+    async def test_tasks_each_send_their_request_credential(
+        self, query_service: HTTPXMock
+    ):
+        server_auth = StorageToken("server-token")
+        current: ContextVar[Credential] = ContextVar("current", default=server_auth)
+        client = self._client(current)
+        users = [f"user-{i}" if i % 3 else "" for i in range(30)]
+
+        async def handle_request(user: str) -> None:
+            current.set(AppUserToken(user) if user else server_auth)
+            await client.execute_query_async(
+                branch_id="123", workspace_id="456", statements=[user]
+            )
+
+        await asyncio.gather(*(handle_request(user) for user in users))
+        await client.close_async()
+
+        requests = query_service.get_requests()
+        assert len(requests) == 3 * len(users)
+        for request in [r for r in requests if r.method == "POST"]:
+            user = json.loads(request.content)["statements"][0]
+            expected = (
+                {"X-Kbc-App-User-Token": user}
+                if user
+                else {"X-StorageAPI-Token": "server-token"}
+            )
+            assert credential_headers(request) == expected
+        assert current.get() is server_auth
 
 
 class TestClientArguments:
