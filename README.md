@@ -234,8 +234,9 @@ client = Client(
 
 **Provider.** `auth=` also takes a callable with no arguments that returns a
 credential. The client calls it before every request, retries included, in sync
-and async methods. Use it for a token that changes, for example one that is
-read from a file:
+and async methods. `execute_query_iter()` and `stream_results()` call it when
+you start reading, not when you call them. Use it for a token that changes,
+for example one that is read from a file:
 
 ```python
 client = Client(
