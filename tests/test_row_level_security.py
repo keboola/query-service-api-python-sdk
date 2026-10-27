@@ -11,10 +11,12 @@ from keboola_query_service import (
     Credential,
     QueryServiceError,
     RowLevelSecurityError,
+    StorageToken,
 )
 
 SUBMIT_URL = "https://query.test.keboola.com/api/v1/branches/123/workspaces/456/queries"
 STREAM_URL = "https://query.test.keboola.com/api/v1/queries/job-1/stmt-1/results/stream"
+SERVER_STORAGE = StorageToken("server-token")
 
 
 @pytest.fixture
@@ -169,7 +171,11 @@ def test_non_json_body_with_denied_text_stays_plain_query_service_error(
 
 @pytest.mark.parametrize(
     "auth",
-    [None, AppUserToken("user-a"), BearerToken("kbc_pat_abc", project_id=1)],
+    [
+        None,
+        AppUserToken("user-a", storage_token=SERVER_STORAGE),
+        BearerToken("kbc_pat_abc", project_id=1),
+    ],
     ids=["client-storage-token", "app-user-token", "bearer-token"],
 )
 def test_refusal_does_not_depend_on_auth(

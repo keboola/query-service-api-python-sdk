@@ -132,6 +132,12 @@ def sent_credentials(httpx_mock: HTTPXMock) -> list[dict[str, str]]:
 
 
 STORAGE_HEADERS = {"X-StorageAPI-Token": "storage-token"}
+SERVER_STORAGE = StorageToken("server-token")
+
+
+def user_headers(user_token: str) -> dict[str, str]:
+    return {"X-Kbc-App-User-Token": user_token, "X-StorageAPI-Token": "server-token"}
+
 
 CREDENTIALS: dict[str, tuple[Credential, dict[str, str]]] = {
     "storage-token": (
@@ -142,7 +148,10 @@ CREDENTIALS: dict[str, tuple[Credential, dict[str, str]]] = {
         BearerToken("kbc_pat_abc", project_id=123),
         {"Authorization": "Bearer kbc_pat_abc", "X-KBC-ProjectId": "123"},
     ),
-    "app-user-token": (AppUserToken("user-a"), {"X-Kbc-App-User-Token": "user-a"}),
+    "app-user-token": (
+        AppUserToken("user-a", storage_token=SERVER_STORAGE),
+        user_headers("user-a"),
+    ),
 }
 
 
@@ -198,25 +207,23 @@ class TestPerCallAuth:
     def test_override_on_every_request(
         self, client: Client, query_service: HTTPXMock, call: SyncCall
     ):
-        call(client, auth=AppUserToken("user-a"))
+        call(client, auth=AppUserToken("user-a", storage_token=SERVER_STORAGE))
 
         assert sent_credentials(query_service)
         assert all(
-            sent == {"X-Kbc-App-User-Token": "user-a"}
-            for sent in sent_credentials(query_service)
+            sent == user_headers("user-a") for sent in sent_credentials(query_service)
         )
 
     @pytest.mark.parametrize("call", ASYNC_CALLS.values(), ids=ASYNC_CALLS.keys())
     async def test_override_on_every_request_async(
         self, client: Client, query_service: HTTPXMock, call: AsyncCall
     ):
-        await call(client, auth=AppUserToken("user-a"))
+        await call(client, auth=AppUserToken("user-a", storage_token=SERVER_STORAGE))
         await client.close_async()
 
         assert sent_credentials(query_service)
         assert all(
-            sent == {"X-Kbc-App-User-Token": "user-a"}
-            for sent in sent_credentials(query_service)
+            sent == user_headers("user-a") for sent in sent_credentials(query_service)
         )
 
     @pytest.mark.parametrize("call", SYNC_CALLS.values(), ids=SYNC_CALLS.keys())
@@ -239,14 +246,19 @@ class TestPerCallAuth:
     def test_override_does_not_stay_on_client(
         self, client: Client, query_service: HTTPXMock
     ):
-        client.submit_job(**STATEMENTS, auth=AppUserToken("user-a"))
+        client.submit_job(
+            **STATEMENTS, auth=AppUserToken("user-a", storage_token=SERVER_STORAGE)
+        )
         client.submit_job(**STATEMENTS)
-        client.submit_job(**STATEMENTS, auth=lambda: AppUserToken("user-b"))
+        client.submit_job(
+            **STATEMENTS,
+            auth=lambda: AppUserToken("user-b", storage_token=SERVER_STORAGE),
+        )
 
         assert sent_credentials(query_service) == [
-            {"X-Kbc-App-User-Token": "user-a"},
+            user_headers("user-a"),
             STORAGE_HEADERS,
-            {"X-Kbc-App-User-Token": "user-b"},
+            user_headers("user-b"),
         ]
 
 
@@ -266,47 +278,60 @@ class TestProvider:
     def test_called_before_every_retry(self, httpx_mock: HTTPXMock):
         httpx_mock.add_response(status_code=503, json={"exception": "busy"})
         httpx_mock.add_response(status_code=201, json={"queryJobId": "job-1"})
-        credentials = iter([AppUserToken("first"), AppUserToken("second")])
+        credentials = iter(
+            [
+                AppUserToken("first", storage_token=SERVER_STORAGE),
+                AppUserToken("second", storage_token=SERVER_STORAGE),
+            ]
+        )
 
         Client(base_url=BASE_URL, auth=lambda: next(credentials)).submit_job(
             **STATEMENTS
         )
 
         assert sent_credentials(httpx_mock) == [
-            {"X-Kbc-App-User-Token": "first"},
-            {"X-Kbc-App-User-Token": "second"},
+            user_headers("first"),
+            user_headers("second"),
         ]
 
     async def test_called_before_every_retry_async(self, httpx_mock: HTTPXMock):
         httpx_mock.add_response(status_code=503, json={"exception": "busy"})
         httpx_mock.add_response(status_code=201, json={"queryJobId": "job-1"})
-        credentials = iter([AppUserToken("first"), AppUserToken("second")])
+        credentials = iter(
+            [
+                AppUserToken("first", storage_token=SERVER_STORAGE),
+                AppUserToken("second", storage_token=SERVER_STORAGE),
+            ]
+        )
         client = Client(base_url=BASE_URL, auth=lambda: next(credentials))
 
         await client.submit_job_async(**STATEMENTS)
         await client.close_async()
 
         assert sent_credentials(httpx_mock) == [
-            {"X-Kbc-App-User-Token": "first"},
-            {"X-Kbc-App-User-Token": "second"},
+            user_headers("first"),
+            user_headers("second"),
         ]
 
     def test_switches_users_between_calls(self, query_service: HTTPXMock):
-        current = {"user": AppUserToken("user-a")}
+        current = {"user": AppUserToken("user-a", storage_token=SERVER_STORAGE)}
         client = Client(base_url=BASE_URL, auth=lambda: current["user"])
 
         client.submit_job(**STATEMENTS)
-        current["user"] = AppUserToken("user-b")
+        current["user"] = AppUserToken("user-b", storage_token=SERVER_STORAGE)
         client.submit_job(**STATEMENTS)
 
         assert sent_credentials(query_service) == [
-            {"X-Kbc-App-User-Token": "user-a"},
-            {"X-Kbc-App-User-Token": "user-b"},
+            user_headers("user-a"),
+            user_headers("user-b"),
         ]
 
     @pytest.mark.parametrize("call", ["stream_results", "stream_results_async"])
     async def test_used_for_streams(self, query_service: HTTPXMock, call: str):
-        client = Client(base_url=BASE_URL, auth=lambda: AppUserToken("user-a"))
+        client = Client(
+            base_url=BASE_URL,
+            auth=lambda: AppUserToken("user-a", storage_token=SERVER_STORAGE),
+        )
 
         if call == "stream_results":
             SYNC_CALLS[call](client)
@@ -314,16 +339,22 @@ class TestProvider:
             await ASYNC_CALLS[call](client)
         await client.close_async()
 
-        assert sent_credentials(query_service) == [{"X-Kbc-App-User-Token": "user-a"}]
+        assert sent_credentials(query_service) == [user_headers("user-a")]
 
     def test_per_call_provider_wins_over_client_provider(
         self, query_service: HTTPXMock
     ):
-        client = Client(base_url=BASE_URL, auth=lambda: AppUserToken("client"))
+        client = Client(
+            base_url=BASE_URL,
+            auth=lambda: AppUserToken("client", storage_token=SERVER_STORAGE),
+        )
 
-        client.submit_job(**STATEMENTS, auth=lambda: AppUserToken("call"))
+        client.submit_job(
+            **STATEMENTS,
+            auth=lambda: AppUserToken("call", storage_token=SERVER_STORAGE),
+        )
 
-        assert sent_credentials(query_service) == [{"X-Kbc-App-User-Token": "call"}]
+        assert sent_credentials(query_service) == [user_headers("call")]
 
     def test_provider_returning_no_credential_is_an_error(self):
         client = Client(base_url=BASE_URL, auth=lambda: "plain-string")  # type: ignore[arg-type,return-value]
@@ -347,7 +378,11 @@ class TestRequestScopedProvider:
         users = [f"user-{i}" if i % 3 else "" for i in range(30)]
 
         def handle_request(user: str) -> None:
-            token = current.set(AppUserToken(user) if user else server_auth)
+            token = current.set(
+                AppUserToken(user, storage_token=SERVER_STORAGE)
+                if user
+                else server_auth
+            )
             try:
                 client.execute_query(
                     branch_id="123", workspace_id="456", statements=[user]
@@ -367,9 +402,7 @@ class TestRequestScopedProvider:
         for request in submits:
             user = json.loads(request.content)["statements"][0]
             expected = (
-                {"X-Kbc-App-User-Token": user}
-                if user
-                else {"X-StorageAPI-Token": "server-token"}
+                user_headers(user) if user else {"X-StorageAPI-Token": "server-token"}
             )
             assert credential_headers(request) == expected
         assert current.get() is server_auth
@@ -383,7 +416,11 @@ class TestRequestScopedProvider:
         users = [f"user-{i}" if i % 3 else "" for i in range(30)]
 
         async def handle_request(user: str) -> None:
-            current.set(AppUserToken(user) if user else server_auth)
+            current.set(
+                AppUserToken(user, storage_token=SERVER_STORAGE)
+                if user
+                else server_auth
+            )
             await client.execute_query_async(
                 branch_id="123", workspace_id="456", statements=[user]
             )
@@ -396,9 +433,7 @@ class TestRequestScopedProvider:
         for request in [r for r in requests if r.method == "POST"]:
             user = json.loads(request.content)["statements"][0]
             expected = (
-                {"X-Kbc-App-User-Token": user}
-                if user
-                else {"X-StorageAPI-Token": "server-token"}
+                user_headers(user) if user else {"X-StorageAPI-Token": "server-token"}
             )
             assert credential_headers(request) == expected
         assert current.get() is server_auth
@@ -416,8 +451,8 @@ CREDENTIAL_TYPES: dict[
         lambda value: {"Authorization": f"Bearer {value}", "X-KBC-ProjectId": "123"},
     ),
     "app-user-token": (
-        AppUserToken,
-        lambda value: {"X-Kbc-App-User-Token": value},
+        lambda token: AppUserToken(token, storage_token=SERVER_STORAGE),
+        lambda value: user_headers(value),
     ),
 }
 
@@ -486,7 +521,9 @@ class TestTokenCallback:
     def test_invalid_callback_value_is_refused_before_sending(
         self, httpx_mock: HTTPXMock, value: object, call: str
     ):
-        client = Client(BASE_URL, auth=AppUserToken(lambda: value))  # type: ignore[arg-type,return-value]
+        client = Client(
+            BASE_URL, auth=AppUserToken(lambda: value, storage_token=SERVER_STORAGE)
+        )  # type: ignore[arg-type,return-value]
 
         with pytest.raises(ValidationError) as exc_info:
             SYNC_CALLS[call](client)
@@ -498,7 +535,9 @@ class TestTokenCallback:
     async def test_invalid_callback_value_is_refused_before_sending_async(
         self, httpx_mock: HTTPXMock, call: str
     ):
-        client = Client(BASE_URL, auth=AppUserToken(lambda: "sec ret"))
+        client = Client(
+            BASE_URL, auth=AppUserToken(lambda: "sec ret", storage_token=SERVER_STORAGE)
+        )
 
         with pytest.raises(ValidationError):
             await ASYNC_CALLS[call](client)
@@ -516,40 +555,45 @@ class TestTokenCallback:
 
         client.submit_job(**STATEMENTS)
         server_token["value"] = "server-2"
-        current.set(AppUserToken(lambda: "user-a"))
+        current.set(AppUserToken(lambda: "user-a", storage_token=SERVER_STORAGE))
         client.submit_job(**STATEMENTS)
         current.set(server_auth)
         client.submit_job(**STATEMENTS)
 
         assert sent_credentials(query_service) == [
             {"X-StorageAPI-Token": "server-1"},
-            {"X-Kbc-App-User-Token": "user-a"},
+            user_headers("user-a"),
             {"X-StorageAPI-Token": "server-2"},
         ]
 
     @pytest.mark.parametrize("call", SYNC_CALLS.values(), ids=SYNC_CALLS.keys())
     def test_used_on_every_sync_method(self, query_service: HTTPXMock, call: SyncCall):
-        call(Client(BASE_URL, auth=AppUserToken(lambda: "user-a")))
+        call(
+            Client(
+                BASE_URL,
+                auth=AppUserToken(lambda: "user-a", storage_token=SERVER_STORAGE),
+            )
+        )
 
         assert sent_credentials(query_service)
         assert all(
-            sent == {"X-Kbc-App-User-Token": "user-a"}
-            for sent in sent_credentials(query_service)
+            sent == user_headers("user-a") for sent in sent_credentials(query_service)
         )
 
     @pytest.mark.parametrize("call", ASYNC_CALLS.values(), ids=ASYNC_CALLS.keys())
     async def test_used_on_every_async_method(
         self, query_service: HTTPXMock, call: AsyncCall
     ):
-        client = Client(BASE_URL, auth=AppUserToken(lambda: "user-a"))
+        client = Client(
+            BASE_URL, auth=AppUserToken(lambda: "user-a", storage_token=SERVER_STORAGE)
+        )
 
         await call(client)
         await client.close_async()
 
         assert sent_credentials(query_service)
         assert all(
-            sent == {"X-Kbc-App-User-Token": "user-a"}
-            for sent in sent_credentials(query_service)
+            sent == user_headers("user-a") for sent in sent_credentials(query_service)
         )
 
     @pytest.mark.parametrize(
@@ -564,6 +608,98 @@ class TestTokenCallback:
             return "secret-token"
 
         credential = make(read_secret_token)
+
+        assert "secret" not in repr(credential)
+        assert "secret" not in str(credential)
+
+
+class TestAppUserTokenWithStorageToken:
+    def test_sends_both_tokens_and_nothing_else(self, query_service: HTTPXMock):
+        credential = AppUserToken("user-a", storage_token=StorageToken("app-storage"))
+
+        Client(BASE_URL, auth=credential).submit_job(**STATEMENTS)
+
+        assert credential.credential_headers() == {
+            "X-Kbc-App-User-Token": "user-a",
+            "X-StorageAPI-Token": "app-storage",
+        }
+        assert sent_credentials(query_service) == [credential.credential_headers()]
+
+    @pytest.mark.parametrize("mode", ["sync", "async"])
+    async def test_both_callbacks_are_read_before_every_retry(
+        self, httpx_mock: HTTPXMock, mode: str
+    ):
+        httpx_mock.add_response(status_code=503, json={"exception": "busy"})
+        httpx_mock.add_response(status_code=201, json={"queryJobId": "job-1"})
+        users = iter(["user-1", "user-2"])
+        storages = iter(["storage-1", "storage-2"])
+        credential = AppUserToken(
+            lambda: next(users), storage_token=StorageToken(lambda: next(storages))
+        )
+        client = Client(BASE_URL, auth=credential)
+
+        if mode == "sync":
+            client.submit_job(**STATEMENTS)
+        else:
+            await client.submit_job_async(**STATEMENTS)
+        await client.close_async()
+
+        assert sent_credentials(httpx_mock) == [
+            {"X-Kbc-App-User-Token": "user-1", "X-StorageAPI-Token": "storage-1"},
+            {"X-Kbc-App-User-Token": "user-2", "X-StorageAPI-Token": "storage-2"},
+        ]
+
+    def test_both_callbacks_are_read_before_every_request(
+        self, query_service: HTTPXMock
+    ):
+        calls = {"user": 0, "storage": 0}
+
+        def read(name: str) -> Callable[[], str]:
+            def reader() -> str:
+                calls[name] += 1
+                return name
+
+            return reader
+
+        credential = AppUserToken(
+            read("user"), storage_token=StorageToken(read("storage"))
+        )
+
+        Client(BASE_URL, auth=credential).execute_query(**STATEMENTS)
+
+        assert calls == {"user": 3, "storage": 3}
+        assert len(query_service.get_requests()) == 3
+
+    def test_invalid_storage_callback_value_is_refused_before_sending(
+        self, httpx_mock: HTTPXMock
+    ):
+        credential = AppUserToken(
+            "user-a", storage_token=StorageToken(lambda: "sec ret")
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            Client(BASE_URL, auth=credential).submit_job(**STATEMENTS)
+
+        assert httpx_mock.get_requests() == []
+        assert "sec" not in str(exc_info.value)
+
+    def test_storage_token_is_required(self):
+        with pytest.raises(TypeError):
+            AppUserToken("user-a")  # type: ignore[call-arg]
+
+    @pytest.mark.parametrize(
+        "storage_token",
+        [None, "storage-token", BearerToken("kbc_pat_abc", project_id=1)],
+        ids=["none", "string", "bearer-token"],
+    )
+    def test_storage_token_must_be_a_storage_token(self, storage_token: object):
+        with pytest.raises(ValidationError):
+            AppUserToken("user-a", storage_token=storage_token)  # type: ignore[arg-type]
+
+    def test_repr_hides_both_tokens(self):
+        credential = AppUserToken(
+            "secret-user", storage_token=StorageToken(lambda: "secret-storage")
+        )
 
         assert "secret" not in repr(credential)
         assert "secret" not in str(credential)
@@ -590,7 +726,7 @@ class TestClientArguments:
             lambda: StorageToken(""),
             lambda: BearerToken("", project_id=1),
             lambda: BearerToken("kbc_pat_abc", project_id=0),
-            lambda: AppUserToken(""),
+            lambda: AppUserToken("", storage_token=SERVER_STORAGE),
         ],
         ids=["empty-storage", "empty-bearer", "bad-project-id", "empty-app-user"],
     )
@@ -600,7 +736,11 @@ class TestClientArguments:
 
 
 class TestTokenIsNotExposed:
-    @pytest.mark.parametrize("credential_type", [StorageToken, AppUserToken])
+    @pytest.mark.parametrize(
+        "credential_type",
+        [StorageToken, lambda token: AppUserToken(token, storage_token=SERVER_STORAGE)],
+        ids=["storage", "app-user"],
+    )
     @pytest.mark.parametrize(
         "token",
         ["secret\n", "sec\rret", "sec\x00ret", "sec ret", "seč-secret"],
@@ -625,7 +765,7 @@ class TestTokenIsNotExposed:
         [
             StorageToken("secret-token"),
             BearerToken("secret-token", project_id=123),
-            AppUserToken("secret-token"),
+            AppUserToken("secret-token", storage_token=SERVER_STORAGE),
         ],
         ids=["storage", "bearer", "app-user"],
     )
@@ -636,7 +776,10 @@ class TestTokenIsNotExposed:
     def test_per_call_token_not_stored_on_client(
         self, client: Client, query_service: HTTPXMock
     ):
-        client.submit_job(**STATEMENTS, auth=AppUserToken("secret-token"))
+        client.submit_job(
+            **STATEMENTS,
+            auth=AppUserToken("secret-token", storage_token=SERVER_STORAGE),
+        )
 
         assert "secret-token" not in repr(client)
         assert "secret-token" not in repr(vars(client))
@@ -648,9 +791,10 @@ class TestTokenIsNotExposed:
         httpx_mock.add_response(status_code=201, json={"queryJobId": "job-1"})
         caplog.set_level(logging.DEBUG)
 
-        Client(base_url=BASE_URL, auth=AppUserToken("secret-token")).submit_job(
-            **STATEMENTS
-        )
+        Client(
+            base_url=BASE_URL,
+            auth=AppUserToken("secret-token", storage_token=SERVER_STORAGE),
+        ).submit_job(**STATEMENTS)
 
         assert "Request failed with status 503" in caplog.text
         assert "secret-token" not in caplog.text
@@ -661,7 +805,10 @@ class TestTokenIsNotExposed:
         httpx_mock.add_response(status_code=status_code, json={"exception": "failed"})
 
         with pytest.raises(QueryServiceError) as exc_info:
-            client.submit_job(**STATEMENTS, auth=AppUserToken("secret-token"))
+            client.submit_job(
+                **STATEMENTS,
+                auth=AppUserToken("secret-token", storage_token=SERVER_STORAGE),
+            )
 
         assert "secret-token" not in str(exc_info.value)
         assert "secret-token" not in repr(exc_info.value)
@@ -679,16 +826,16 @@ class TestConcurrentUsers:
                 branch_id="123",
                 workspace_id="456",
                 statements=[user],
-                auth=AppUserToken(user),
+                auth=AppUserToken(user, storage_token=SERVER_STORAGE),
             )
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(run, users))
 
         for request in query_service.get_requests():
-            assert credential_headers(request) == {
-                "X-Kbc-App-User-Token": json.loads(request.content)["statements"][0]
-            }
+            assert credential_headers(request) == user_headers(
+                json.loads(request.content)["statements"][0]
+            )
         assert len(query_service.get_requests()) == len(users)
 
     async def test_tasks_each_send_only_their_credential(
@@ -702,7 +849,7 @@ class TestConcurrentUsers:
                     branch_id="123",
                     workspace_id="456",
                     statements=[user],
-                    auth=AppUserToken(user),
+                    auth=AppUserToken(user, storage_token=SERVER_STORAGE),
                 )
                 for user in users
             )
@@ -710,7 +857,7 @@ class TestConcurrentUsers:
         await client.close_async()
 
         for request in query_service.get_requests():
-            assert credential_headers(request) == {
-                "X-Kbc-App-User-Token": json.loads(request.content)["statements"][0]
-            }
+            assert credential_headers(request) == user_headers(
+                json.loads(request.content)["statements"][0]
+            )
         assert len(query_service.get_requests()) == len(users)

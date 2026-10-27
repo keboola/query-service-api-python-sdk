@@ -92,13 +92,26 @@ class BearerToken(_Credential):
 
 
 class AppUserToken(_Credential):
-    """App user token of a data app user, sent as ``X-Kbc-App-User-Token``."""
+    """App user token of a data app user, sent with the app's Storage API token.
 
-    __slots__ = ()
+    Sent as ``X-Kbc-App-User-Token`` and ``X-StorageAPI-Token``.
+    """
+
+    __slots__ = ("storage_token",)
+    storage_token: StorageToken
+
+    def __init__(self, token: TokenSource, *, storage_token: StorageToken) -> None:
+        if not isinstance(storage_token, StorageToken):
+            raise ValidationError("storage_token must be a StorageToken")
+        super().__init__(token)
+        object.__setattr__(self, "storage_token", storage_token)
 
     def credential_headers(self) -> dict[str, str]:
-        """Return the headers of this credential, with the current token."""
-        return {"X-Kbc-App-User-Token": self._token.read()}
+        """Return the headers of this credential, with the current tokens."""
+        return {
+            "X-Kbc-App-User-Token": self._token.read(),
+            **self.storage_token.credential_headers(),
+        }
 
 
 Credential = StorageToken | BearerToken | AppUserToken
