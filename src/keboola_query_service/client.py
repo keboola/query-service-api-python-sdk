@@ -31,6 +31,7 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 _APP_USER_TOKEN_HEADER = "X-Kbc-App-User-Token"
+_STORAGE_API_TOKEN_HEADER = "X-StorageAPI-Token"
 
 
 class Client:
@@ -107,14 +108,14 @@ class Client:
         )
         self._async_client: httpx.AsyncClient | None = None
 
-    @staticmethod
-    def _user_token_headers(user_token: str | None) -> dict[str, str]:
-        return {_APP_USER_TOKEN_HEADER: user_token} if user_token else {}
+    def _auth_headers(self, user_token: str | None) -> dict[str, str]:
+        if user_token:
+            return {_APP_USER_TOKEN_HEADER: user_token}
+        return {_STORAGE_API_TOKEN_HEADER: self.token}
 
     def _build_headers(self, user_agent: str | None) -> dict[str, str]:
         """Build request headers."""
         return {
-            "X-StorageAPI-Token": self.token,
             "Content-Type": "application/json",
             "Accept": "application/json",
             "User-Agent": user_agent
@@ -212,7 +213,7 @@ class Client:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Make an HTTP request with retry logic."""
-        kwargs["headers"] = self._user_token_headers(user_token)
+        kwargs["headers"] = self._auth_headers(user_token)
         last_exception: Exception | None = None
         last_response: httpx.Response | None = None
 
@@ -280,7 +281,7 @@ class Client:
     ) -> dict[str, Any]:
         """Make an async HTTP request with retry logic."""
         client = self._get_async_client()
-        kwargs["headers"] = self._user_token_headers(user_token)
+        kwargs["headers"] = self._auth_headers(user_token)
         last_exception: Exception | None = None
         last_response: httpx.Response | None = None
 
@@ -365,7 +366,7 @@ class Client:
             session_id: Optional session ID to reuse a Snowflake session across calls
             refresh_metadata_on_success: Whether to refresh workspace
                 metadata after successful execution
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Returns:
             Query job ID
@@ -424,7 +425,7 @@ class Client:
 
         Args:
             query_job_id: Query job ID
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Returns:
             JobStatus with current state and statements
@@ -459,7 +460,7 @@ class Client:
             statement_id: Statement ID
             offset: Offset for pagination
             page_size: Page size for pagination
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Returns:
             QueryResult with columns and data
@@ -502,7 +503,7 @@ class Client:
         Args:
             query_job_id: Query job ID
             reason: Optional cancellation reason
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Returns:
             Query job ID
@@ -547,7 +548,7 @@ class Client:
             workspace_id: Workspace ID
             after_id: Get results after this statement ID
             page_size: Number of results per page
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Returns:
             QueryHistory with list of statements
@@ -606,7 +607,7 @@ class Client:
             max_wait_time: Maximum time to wait in seconds
             poll_interval_start: Initial polling interval
             poll_interval_max: Maximum polling interval
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Returns:
             Final JobStatus
@@ -869,7 +870,7 @@ class Client:
                 metadata after successful execution
             page_size: Internal page size for fetching results (default 5000)
             max_rows: Optional cap on the number of rows fetched per statement
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Returns:
             List of QueryResult, one per statement
@@ -990,7 +991,7 @@ class Client:
             page_size: Internal page size for fetching results (default 5000)
             max_rows: Optional cap on total rows fetched per statement.
                 Defaults to ``None`` (no limit).
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Yields:
             QueryResult pages, one per API response, for each statement
@@ -1076,7 +1077,7 @@ class Client:
         Args:
             query_job_id: Query job ID
             statement_id: Statement ID
-            user_token: Optional app user token for the X-Kbc-App-User-Token header
+            user_token: Optional app user token, sent instead of the Storage API token
 
         Yields:
             Parsed JSON objects from the NDJSON stream
@@ -1084,7 +1085,7 @@ class Client:
         with self._client.stream(
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results/stream",
-            headers=self._user_token_headers(user_token),
+            headers=self._auth_headers(user_token),
         ) as response:
             if response.status_code >= 400:
                 # Read full response for error handling
@@ -1110,7 +1111,7 @@ class Client:
         async with client.stream(
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results/stream",
-            headers=self._user_token_headers(user_token),
+            headers=self._auth_headers(user_token),
         ) as response:
             if response.status_code >= 400:
                 await response.aread()

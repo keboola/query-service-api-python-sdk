@@ -15,6 +15,7 @@ from keboola_query_service import Client, QueryServiceError
 
 BASE_URL = "https://query.test.keboola.com"
 HEADER = "X-Kbc-App-User-Token"
+STORAGE_HEADER = "X-StorageAPI-Token"
 
 JOB_STATUS = {
     "queryJobId": "job-1",
@@ -108,6 +109,12 @@ def sent_tokens(httpx_mock: HTTPXMock) -> list[str | None]:
     return [request.headers.get(HEADER) for request in httpx_mock.get_requests()]
 
 
+def sent_storage_tokens(httpx_mock: HTTPXMock) -> list[str | None]:
+    return [
+        request.headers.get(STORAGE_HEADER) for request in httpx_mock.get_requests()
+    ]
+
+
 class TestPerCallUserToken:
     @pytest.mark.parametrize("call", SYNC_CALLS.values(), ids=SYNC_CALLS.keys())
     def test_sends_token_on_every_request(
@@ -117,6 +124,7 @@ class TestPerCallUserToken:
 
         assert sent_tokens(query_service)
         assert set(sent_tokens(query_service)) == {"user-a"}
+        assert set(sent_storage_tokens(query_service)) == {None}
 
     @pytest.mark.parametrize("call", ASYNC_CALLS.values(), ids=ASYNC_CALLS.keys())
     async def test_sends_token_on_every_request_async(
@@ -127,14 +135,26 @@ class TestPerCallUserToken:
 
         assert sent_tokens(query_service)
         assert set(sent_tokens(query_service)) == {"user-a"}
+        assert set(sent_storage_tokens(query_service)) == {None}
 
     @pytest.mark.parametrize("call", SYNC_CALLS.values(), ids=SYNC_CALLS.keys())
-    def test_without_token_sends_no_header(
+    def test_without_token_sends_only_storage_token(
         self, client: Client, query_service: HTTPXMock, call: SyncCall
     ):
         call(client)
 
         assert set(sent_tokens(query_service)) == {None}
+        assert set(sent_storage_tokens(query_service)) == {"test-token"}
+
+    @pytest.mark.parametrize("call", ASYNC_CALLS.values(), ids=ASYNC_CALLS.keys())
+    async def test_without_token_sends_only_storage_token_async(
+        self, client: Client, query_service: HTTPXMock, call: AsyncCall
+    ):
+        await call(client)
+        await client.close_async()
+
+        assert set(sent_tokens(query_service)) == {None}
+        assert set(sent_storage_tokens(query_service)) == {"test-token"}
 
     def test_execute_query_sends_token_on_submit_poll_and_results(
         self, client: Client, query_service: HTTPXMock
@@ -153,12 +173,30 @@ class TestPerCallUserToken:
         client.submit_job(**STATEMENTS, user_token="user-b")
 
         assert sent_tokens(query_service) == ["user-a", None, "user-b"]
+        assert sent_storage_tokens(query_service) == [None, "test-token", None]
 
-    def test_keeps_storage_token(self, client: Client, query_service: HTTPXMock):
+    def test_retry_with_token_sends_no_storage_token(
+        self, client: Client, httpx_mock: HTTPXMock
+    ):
+        httpx_mock.add_response(status_code=503, json={"exception": "busy"})
+        httpx_mock.add_response(status_code=201, json={"queryJobId": "job-1"})
+
         client.submit_job(**STATEMENTS, user_token="user-a")
 
-        request = query_service.get_requests()[0]
-        assert request.headers["X-StorageAPI-Token"] == "test-token"
+        assert sent_tokens(httpx_mock) == ["user-a", "user-a"]
+        assert sent_storage_tokens(httpx_mock) == [None, None]
+
+    async def test_retry_with_token_sends_no_storage_token_async(
+        self, client: Client, httpx_mock: HTTPXMock
+    ):
+        httpx_mock.add_response(status_code=503, json={"exception": "busy"})
+        httpx_mock.add_response(status_code=201, json={"queryJobId": "job-1"})
+
+        await client.submit_job_async(**STATEMENTS, user_token="user-a")
+        await client.close_async()
+
+        assert sent_tokens(httpx_mock) == ["user-a", "user-a"]
+        assert sent_storage_tokens(httpx_mock) == [None, None]
 
     def test_empty_token_sends_no_header(
         self, client: Client, query_service: HTTPXMock
@@ -166,6 +204,7 @@ class TestPerCallUserToken:
         client.submit_job(**STATEMENTS, user_token="")
 
         assert sent_tokens(query_service) == [None]
+        assert sent_storage_tokens(query_service) == ["test-token"]
 
 
 class TestTokenIsNotExposed:
