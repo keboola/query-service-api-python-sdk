@@ -7,6 +7,11 @@ from dataclasses import dataclass, field
 def _require_token(token: str) -> None:
     if not isinstance(token, str) or not token:
         raise ValueError("token must be a non-empty string")
+    # httpx puts an unsendable header value into its error message.
+    if not (token.isascii() and token.isprintable()) or " " in token:
+        raise ValueError(
+            "token must contain only printable ASCII characters without spaces"
+        )
 
 
 @dataclass(frozen=True)

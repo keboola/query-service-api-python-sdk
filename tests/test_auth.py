@@ -325,8 +325,10 @@ class TestProvider:
     def test_provider_returning_no_credential_is_an_error(self):
         client = Client(base_url=BASE_URL, auth=lambda: "plain-string")  # type: ignore[arg-type,return-value]
 
-        with pytest.raises(TypeError):
+        with pytest.raises(TypeError) as exc_info:
             client.submit_job(**STATEMENTS)
+
+        assert "plain-string" not in str(exc_info.value)
 
 
 class TestClientArguments:
@@ -360,6 +362,26 @@ class TestClientArguments:
 
 
 class TestTokenIsNotExposed:
+    @pytest.mark.parametrize("credential_type", [StorageToken, AppUserToken])
+    @pytest.mark.parametrize(
+        "token",
+        ["secret\n", "sec\rret", "sec\x00ret", "sec ret", "seč-secret"],
+        ids=["newline", "carriage-return", "nul", "space", "non-ascii"],
+    )
+    def test_unsendable_token_is_refused_without_echo(
+        self, credential_type: Callable[[str], Credential], token: str
+    ):
+        with pytest.raises(ValueError) as exc_info:
+            credential_type(token)
+
+        assert "sec" not in str(exc_info.value)
+
+    def test_unsendable_bearer_token_is_refused_without_echo(self):
+        with pytest.raises(ValueError) as exc_info:
+            BearerToken("secret\n", project_id=1)
+
+        assert "secret" not in str(exc_info.value)
+
     @pytest.mark.parametrize(
         "credential",
         [
