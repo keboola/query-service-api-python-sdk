@@ -164,7 +164,7 @@ def test_non_json_body_with_denied_text_stays_plain_query_service_error(
     assert type(exc_info.value) is QueryServiceError
 
 
-def test_refusal_through_user_token_view(client: Client, httpx_mock: HTTPXMock):
+def test_refusal_with_user_token(client: Client, httpx_mock: HTTPXMock):
     httpx_mock.add_response(
         method="POST",
         url=SUBMIT_URL,
@@ -173,7 +173,12 @@ def test_refusal_through_user_token_view(client: Client, httpx_mock: HTTPXMock):
     )
 
     with pytest.raises(RowLevelSecurityError):
-        submit(client.with_user_token("user-a"))
+        client.submit_job(
+            branch_id="123",
+            workspace_id="456",
+            statements=["SELECT 1"],
+            user_token="user-a",
+        )
 
 
 async def test_refusal_on_stream_raises_row_level_security_error_async(

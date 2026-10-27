@@ -1,11 +1,10 @@
 """Keboola Query Service Client."""
 
 import asyncio
-import copy
 import logging
 import random
 import time
-from collections.abc import AsyncIterator, Generator, Iterator, Mapping
+from collections.abc import AsyncIterator, Generator, Iterator
 from typing import Any, cast
 
 import httpx
@@ -31,21 +30,7 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-APP_USER_TOKEN_HEADER = "X-Kbc-App-User-Token"
-
-
-def user_token_from_headers(headers: Mapping[str, str]) -> str | None:
-    """Return the X-Kbc-App-User-Token value from incoming request headers.
-
-    Accepts any mapping, e.g. Streamlit ``st.context.headers``, Starlette or
-    FastAPI ``request.headers``, or a plain dict. The name is matched
-    case-insensitively. A missing or empty header returns None.
-    """
-    name = APP_USER_TOKEN_HEADER.lower()
-    for key, value in headers.items():
-        if key.lower() == name:
-            return value or None
-    return None
+_APP_USER_TOKEN_HEADER = "X-Kbc-App-User-Token"
 
 
 class Client:
@@ -121,30 +106,10 @@ class Client:
             timeout=httpx.Timeout(timeout, connect=connect_timeout),
         )
         self._async_client: httpx.AsyncClient | None = None
-        self._user_token: str | None = None
-        self._shared_with: Client | None = None
 
-    def with_user_token(self, user_token: str | None) -> "Client":
-        """Return a client that sends ``user_token`` on every call.
-
-        The returned client shares the HTTP connections with this client and
-        does not change it, so one shared client can serve many users. Closing
-        the returned client does not close the shared connections.
-
-        Args:
-            user_token: App user token for the X-Kbc-App-User-Token header,
-                e.g. from :func:`user_token_from_headers`. None or empty sends
-                no header.
-        """
-        view = copy.copy(self)
-        view._shared_with = self._shared_with or self
-        view._async_client = None
-        view._user_token = user_token
-        return view
-
-    def _user_token_headers(self, user_token: str | None) -> dict[str, str]:
-        token = self._user_token if user_token is None else user_token
-        return {APP_USER_TOKEN_HEADER: token} if token else {}
+    @staticmethod
+    def _user_token_headers(user_token: str | None) -> dict[str, str]:
+        return {_APP_USER_TOKEN_HEADER: user_token} if user_token else {}
 
     def _build_headers(self, user_agent: str | None) -> dict[str, str]:
         """Build request headers."""
@@ -158,8 +123,6 @@ class Client:
 
     def _get_async_client(self) -> httpx.AsyncClient:
         """Get or create async client."""
-        if self._shared_with is not None:
-            return self._shared_with._get_async_client()
         if self._async_client is None:
             self._async_client = httpx.AsyncClient(
                 base_url=self.base_url,
@@ -174,8 +137,6 @@ class Client:
         Closes the sync client and clears the async client reference.
         If you used async methods, call close_async() instead for proper cleanup.
         """
-        if self._shared_with is not None:
-            return
         self._client.close()
         # Set async client to None - it will be garbage collected
         # For proper async cleanup, use close_async() instead
@@ -187,8 +148,6 @@ class Client:
         This is the preferred cleanup method if you used any async methods.
         Properly closes both clients to avoid resource leaks.
         """
-        if self._shared_with is not None:
-            return
         # Close sync client
         self._client.close()
 

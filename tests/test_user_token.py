@@ -11,7 +11,7 @@ import httpx
 import pytest
 from pytest_httpx import HTTPXMock
 
-from keboola_query_service import Client
+from keboola_query_service import Client, QueryServiceError
 
 BASE_URL = "https://query.test.keboola.com"
 HEADER = "X-Kbc-App-User-Token"
@@ -168,92 +168,12 @@ class TestPerCallUserToken:
         assert sent_tokens(query_service) == [None]
 
 
-class TestWithUserToken:
-    def test_view_sends_token(self, client: Client, query_service: HTTPXMock):
-        client.with_user_token("user-a").execute_query(**STATEMENTS)
-
-        assert set(sent_tokens(query_service)) == {"user-a"}
-
-    async def test_view_sends_token_async(
-        self, client: Client, query_service: HTTPXMock
-    ):
-        await client.with_user_token("user-a").execute_query_async(**STATEMENTS)
-        await client.close_async()
-
-        assert set(sent_tokens(query_service)) == {"user-a"}
-
-    def test_view_does_not_change_shared_client(
-        self, client: Client, query_service: HTTPXMock
-    ):
-        client.with_user_token("user-a").submit_job(**STATEMENTS)
-        client.submit_job(**STATEMENTS)
-
-        assert sent_tokens(query_service) == ["user-a", None]
-
-    def test_per_call_token_wins_over_view_token(
-        self, client: Client, query_service: HTTPXMock
-    ):
-        client.with_user_token("user-a").submit_job(**STATEMENTS, user_token="user-b")
-
-        assert sent_tokens(query_service) == ["user-b"]
-
-    @pytest.mark.parametrize("token", [None, ""])
-    def test_view_without_token_sends_no_header(
-        self, client: Client, query_service: HTTPXMock, token: str | None
-    ):
-        client.with_user_token(token).submit_job(**STATEMENTS)
-
-        assert sent_tokens(query_service) == [None]
-
-    def test_view_of_view_replaces_token(
-        self, client: Client, query_service: HTTPXMock
-    ):
-        client.with_user_token("user-a").with_user_token("user-b").submit_job(
-            **STATEMENTS
-        )
-
-        assert sent_tokens(query_service) == ["user-b"]
-
-    def test_view_shares_sync_pool(self, client: Client):
-        assert client.with_user_token("user-a")._client is client._client
-
-    async def test_view_shares_async_pool(self, client: Client):
-        view = client.with_user_token("user-a")
-
-        assert view._get_async_client() is client._get_async_client()
-        assert client.with_user_token("user-b")._get_async_client() is (
-            client._get_async_client()
-        )
-        await client.close_async()
-
-    def test_closing_view_keeps_shared_client_open(
-        self, client: Client, query_service: HTTPXMock
-    ):
-        with client.with_user_token("user-a") as view:
-            view.submit_job(**STATEMENTS)
-        client.with_user_token("user-b").close()
-
-        client.submit_job(**STATEMENTS)
-
-        assert sent_tokens(query_service) == ["user-a", None]
-
-    async def test_closing_view_keeps_shared_async_client_open(
-        self, client: Client, query_service: HTTPXMock
-    ):
-        async with client.with_user_token("user-a") as view:
-            await view.submit_job_async(**STATEMENTS)
-
-        await client.submit_job_async(**STATEMENTS)
-        await client.close_async()
-
-        assert sent_tokens(query_service) == ["user-a", None]
-
-
 class TestTokenIsNotExposed:
-    def test_token_not_in_repr(self, client: Client):
-        assert "secret-user-token" not in repr(
-            client.with_user_token("secret-user-token")
-        )
+    def test_token_not_stored_on_client(self, client: Client, query_service: HTTPXMock):
+        client.submit_job(**STATEMENTS, user_token="secret-user-token")
+
+        assert "secret-user-token" not in repr(client)
+        assert "secret-user-token" not in repr(vars(client))
 
     def test_token_not_logged_on_retry(
         self, client: Client, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
@@ -262,10 +182,25 @@ class TestTokenIsNotExposed:
         httpx_mock.add_response(status_code=201, json={"queryJobId": "job-1"})
         caplog.set_level(logging.DEBUG)
 
-        client.with_user_token("secret-user-token").submit_job(**STATEMENTS)
+        client.submit_job(**STATEMENTS, user_token="secret-user-token")
 
         assert "Request failed with status 503" in caplog.text
         assert "secret-user-token" not in caplog.text
+
+    @pytest.mark.parametrize("status_code", [401, 403, 500])
+    def test_token_not_in_error(self, httpx_mock: HTTPXMock, status_code: int):
+        client = Client(base_url=BASE_URL, token="test-token", max_retries=0)
+        httpx_mock.add_response(
+            status_code=status_code,
+            json={"exception": "Row-level security does not allow this query"},
+        )
+
+        with pytest.raises(QueryServiceError) as exc_info:
+            client.submit_job(**STATEMENTS, user_token="secret-user-token")
+
+        assert "secret-user-token" not in str(exc_info.value)
+        assert "secret-user-token" not in repr(exc_info.value)
+        assert "secret-user-token" not in repr(vars(exc_info.value))
 
 
 class TestConcurrentUsers:
@@ -275,8 +210,8 @@ class TestConcurrentUsers:
         users = [f"user-{i}" for i in range(20)]
 
         def run(user: str) -> None:
-            client.with_user_token(user).submit_job(
-                branch_id="123", workspace_id="456", statements=[user]
+            client.submit_job(
+                branch_id="123", workspace_id="456", statements=[user], user_token=user
             )
 
         with ThreadPoolExecutor(max_workers=8) as pool:
@@ -295,8 +230,11 @@ class TestConcurrentUsers:
 
         await asyncio.gather(
             *(
-                client.with_user_token(user).submit_job_async(
-                    branch_id="123", workspace_id="456", statements=[user]
+                client.submit_job_async(
+                    branch_id="123",
+                    workspace_id="456",
+                    statements=[user],
+                    user_token=user,
                 )
                 for user in users
             )
