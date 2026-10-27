@@ -10,6 +10,7 @@ from typing import Any, cast
 import httpx
 
 from ._version import __version__
+from .auth import Auth, StorageToken, _resolve_headers
 from .exceptions import (
     ROW_LEVEL_SECURITY_DENIED_MESSAGE,
     AuthenticationError,
@@ -29,9 +30,6 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
-
-_APP_USER_TOKEN_HEADER = "X-Kbc-App-User-Token"
-_STORAGE_API_TOKEN_HEADER = "X-StorageAPI-Token"
 
 
 class Client:
@@ -79,8 +77,9 @@ class Client:
     def __init__(
         self,
         base_url: str,
-        token: str,
+        token: str | None = None,
         *,
+        auth: Auth | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         max_retries: int = DEFAULT_MAX_RETRIES,
@@ -90,14 +89,24 @@ class Client:
 
         Args:
             base_url: Base URL of the Query Service (e.g., "https://query.keboola.com")
-            token: Keboola Storage API token
+            token: Keboola Storage API token, the same as
+                ``auth=StorageToken(token)``
+            auth: Credential, or a callable that returns one before every
+                request (retries included). Use either ``token`` or ``auth``.
             timeout: Request timeout in seconds
             connect_timeout: Connection timeout in seconds
             max_retries: Maximum number of retries for failed requests
             user_agent: Custom user agent string
         """
+        if token is not None:
+            if auth is not None:
+                raise ValueError("Pass either token or auth, not both")
+            auth = StorageToken(token)
+        elif auth is None:
+            raise ValueError("Pass token or auth")
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self._auth: Auth = auth
         self.max_retries = max_retries
         self._user_agent = user_agent
 
@@ -108,10 +117,8 @@ class Client:
         )
         self._async_client: httpx.AsyncClient | None = None
 
-    def _auth_headers(self, user_token: str | None) -> dict[str, str]:
-        if user_token:
-            return {_APP_USER_TOKEN_HEADER: user_token}
-        return {_STORAGE_API_TOKEN_HEADER: self.token}
+    def _auth_headers(self, auth: Auth | None) -> dict[str, str]:
+        return _resolve_headers(self._auth if auth is None else auth)
 
     def _build_headers(self, user_agent: str | None) -> dict[str, str]:
         """Build request headers."""
@@ -209,17 +216,18 @@ class Client:
         method: str,
         path: str,
         *,
-        user_token: str | None = None,
+        auth: Auth | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Make an HTTP request with retry logic."""
-        kwargs["headers"] = self._auth_headers(user_token)
         last_exception: Exception | None = None
         last_response: httpx.Response | None = None
 
         for attempt in range(self.max_retries + 1):
             try:
-                response = self._client.request(method, path, **kwargs)
+                response = self._client.request(
+                    method, path, headers=self._auth_headers(auth), **kwargs
+                )
 
                 # Check if we should retry based on status code
                 should_retry = (
@@ -276,18 +284,19 @@ class Client:
         method: str,
         path: str,
         *,
-        user_token: str | None = None,
+        auth: Auth | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Make an async HTTP request with retry logic."""
         client = self._get_async_client()
-        kwargs["headers"] = self._auth_headers(user_token)
         last_exception: Exception | None = None
         last_response: httpx.Response | None = None
 
         for attempt in range(self.max_retries + 1):
             try:
-                response = await client.request(method, path, **kwargs)
+                response = await client.request(
+                    method, path, headers=self._auth_headers(auth), **kwargs
+                )
 
                 # Check if we should retry based on status code
                 should_retry = (
@@ -353,7 +362,7 @@ class Client:
         actor_type: ActorType = ActorType.USER,
         session_id: str | None = None,
         refresh_metadata_on_success: bool = False,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> str:
         """Submit a query job without waiting for completion.
 
@@ -366,7 +375,7 @@ class Client:
             session_id: Optional session ID to reuse a Snowflake session across calls
             refresh_metadata_on_success: Whether to refresh workspace
                 metadata after successful execution
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Returns:
             Query job ID
@@ -384,7 +393,7 @@ class Client:
             "POST",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
             json=body,
-            user_token=user_token,
+            auth=auth,
         )
         return str(data["queryJobId"])
 
@@ -398,7 +407,7 @@ class Client:
         actor_type: ActorType = ActorType.USER,
         session_id: str | None = None,
         refresh_metadata_on_success: bool = False,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> str:
         """Submit a query job without waiting (async version)."""
         body: dict[str, object] = {
@@ -414,33 +423,31 @@ class Client:
             "POST",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
             json=body,
-            user_token=user_token,
+            auth=auth,
         )
         return str(data["queryJobId"])
 
     def get_job_status(
-        self, query_job_id: str, *, user_token: str | None = None
+        self, query_job_id: str, *, auth: Auth | None = None
     ) -> JobStatus:
         """Get the status of a query job.
 
         Args:
             query_job_id: Query job ID
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Returns:
             JobStatus with current state and statements
         """
-        data = self._request(
-            "GET", f"/api/v1/queries/{query_job_id}", user_token=user_token
-        )
+        data = self._request("GET", f"/api/v1/queries/{query_job_id}", auth=auth)
         return JobStatus.from_dict(data)
 
     async def get_job_status_async(
-        self, query_job_id: str, *, user_token: str | None = None
+        self, query_job_id: str, *, auth: Auth | None = None
     ) -> JobStatus:
         """Get the status of a query job (async version)."""
         data = await self._request_async(
-            "GET", f"/api/v1/queries/{query_job_id}", user_token=user_token
+            "GET", f"/api/v1/queries/{query_job_id}", auth=auth
         )
         return JobStatus.from_dict(data)
 
@@ -451,7 +458,7 @@ class Client:
         *,
         offset: int = 0,
         page_size: int = 500,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> QueryResult:
         """Get results for a specific statement.
 
@@ -460,7 +467,7 @@ class Client:
             statement_id: Statement ID
             offset: Offset for pagination
             page_size: Page size for pagination
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Returns:
             QueryResult with columns and data
@@ -469,7 +476,7 @@ class Client:
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results",
             params={"offset": offset, "pageSize": page_size},
-            user_token=user_token,
+            auth=auth,
         )
         return QueryResult.from_dict(data)
 
@@ -480,14 +487,14 @@ class Client:
         *,
         offset: int = 0,
         page_size: int = 500,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> QueryResult:
         """Get results for a specific statement (async version)."""
         data = await self._request_async(
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results",
             params={"offset": offset, "pageSize": page_size},
-            user_token=user_token,
+            auth=auth,
         )
         return QueryResult.from_dict(data)
 
@@ -496,14 +503,14 @@ class Client:
         query_job_id: str,
         reason: str | None = None,
         *,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> str:
         """Cancel a running query job.
 
         Args:
             query_job_id: Query job ID
             reason: Optional cancellation reason
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Returns:
             Query job ID
@@ -512,7 +519,7 @@ class Client:
             "POST",
             f"/api/v1/queries/{query_job_id}/cancel",
             json={"reason": reason or "Canceled by user"},
-            user_token=user_token,
+            auth=auth,
         )
         return str(data["queryJobId"])
 
@@ -521,14 +528,14 @@ class Client:
         query_job_id: str,
         reason: str | None = None,
         *,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> str:
         """Cancel a running query job (async version)."""
         data = await self._request_async(
             "POST",
             f"/api/v1/queries/{query_job_id}/cancel",
             json={"reason": reason or "Canceled by user"},
-            user_token=user_token,
+            auth=auth,
         )
         return str(data["queryJobId"])
 
@@ -539,7 +546,7 @@ class Client:
         *,
         after_id: str | None = None,
         page_size: int = 500,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> QueryHistory:
         """Get query history for a workspace.
 
@@ -548,7 +555,7 @@ class Client:
             workspace_id: Workspace ID
             after_id: Get results after this statement ID
             page_size: Number of results per page
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Returns:
             QueryHistory with list of statements
@@ -561,7 +568,7 @@ class Client:
             "GET",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
             params=params,
-            user_token=user_token,
+            auth=auth,
         )
         return QueryHistory.from_dict(data)
 
@@ -572,7 +579,7 @@ class Client:
         *,
         after_id: str | None = None,
         page_size: int = 500,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> QueryHistory:
         """Get query history for a workspace (async version)."""
         params: dict[str, Any] = {"pageSize": page_size}
@@ -583,7 +590,7 @@ class Client:
             "GET",
             f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
             params=params,
-            user_token=user_token,
+            auth=auth,
         )
         return QueryHistory.from_dict(data)
 
@@ -598,7 +605,7 @@ class Client:
         max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
         poll_interval_start: float = DEFAULT_POLL_INTERVAL_START,
         poll_interval_max: float = DEFAULT_POLL_INTERVAL_MAX,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> JobStatus:
         """Wait for a job to complete.
 
@@ -607,7 +614,7 @@ class Client:
             max_wait_time: Maximum time to wait in seconds
             poll_interval_start: Initial polling interval
             poll_interval_max: Maximum polling interval
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Returns:
             Final JobStatus
@@ -620,7 +627,7 @@ class Client:
         poll_interval = poll_interval_start
 
         while True:
-            status = self.get_job_status(query_job_id, user_token=user_token)
+            status = self.get_job_status(query_job_id, auth=auth)
 
             if status.status.is_terminal():
                 if status.status == JobState.FAILED:
@@ -651,16 +658,14 @@ class Client:
         max_wait_time: float = DEFAULT_MAX_WAIT_TIME,
         poll_interval_start: float = DEFAULT_POLL_INTERVAL_START,
         poll_interval_max: float = DEFAULT_POLL_INTERVAL_MAX,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> JobStatus:
         """Wait for a job to complete (async version)."""
         start_time = time.time()
         poll_interval = poll_interval_start
 
         while True:
-            status = await self.get_job_status_async(
-                query_job_id, user_token=user_token
-            )
+            status = await self.get_job_status_async(query_job_id, auth=auth)
 
             if status.status.is_terminal():
                 if status.status == JobState.FAILED:
@@ -690,7 +695,7 @@ class Client:
         statement_id: str,
         page_size: int,
         max_rows: int | None,
-        user_token: str | None,
+        auth: Auth | None,
     ) -> Generator[QueryResult, None, None]:
         """Yield result pages one at a time for a statement."""
         offset = 0
@@ -711,7 +716,7 @@ class Client:
                 statement_id,
                 offset=offset,
                 page_size=current_page_size,
-                user_token=user_token,
+                auth=auth,
             )
 
             if number_of_rows is None:
@@ -735,7 +740,7 @@ class Client:
         statement_id: str,
         page_size: int,
         max_rows: int | None,
-        user_token: str | None,
+        auth: Auth | None,
     ) -> AsyncIterator[QueryResult]:
         """Yield result pages one at a time for a statement (async version)."""
         offset = 0
@@ -756,7 +761,7 @@ class Client:
                 statement_id,
                 offset=offset,
                 page_size=current_page_size,
-                user_token=user_token,
+                auth=auth,
             )
 
             if number_of_rows is None:
@@ -849,7 +854,7 @@ class Client:
         refresh_metadata_on_success: bool = False,
         page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
         max_rows: int | None = None,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> list[QueryResult]:
         """Execute query and wait for results.
 
@@ -870,7 +875,7 @@ class Client:
                 metadata after successful execution
             page_size: Internal page size for fetching results (default 5000)
             max_rows: Optional cap on the number of rows fetched per statement
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Returns:
             List of QueryResult, one per statement
@@ -891,19 +896,17 @@ class Client:
             actor_type=actor_type,
             session_id=session_id,
             refresh_metadata_on_success=refresh_metadata_on_success,
-            user_token=user_token,
+            auth=auth,
         )
 
         # Wait for completion
-        status = self.wait_for_job(
-            job_id, max_wait_time=max_wait_time, user_token=user_token
-        )
+        status = self.wait_for_job(job_id, max_wait_time=max_wait_time, auth=auth)
 
         # Fetch results for each statement, auto-paginating across pages
         results = []
         for statement in status.statements:
             pages = self._iter_result_pages(
-                job_id, statement.id, page_size, max_rows, user_token
+                job_id, statement.id, page_size, max_rows, auth
             )
             results.append(self._merge_result_pages(pages))
 
@@ -922,7 +925,7 @@ class Client:
         refresh_metadata_on_success: bool = False,
         page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
         max_rows: int | None = None,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> list[QueryResult]:
         """Execute query and wait for results (async version)."""
         self._validate_pagination_options(page_size, max_rows)
@@ -936,19 +939,19 @@ class Client:
             actor_type=actor_type,
             session_id=session_id,
             refresh_metadata_on_success=refresh_metadata_on_success,
-            user_token=user_token,
+            auth=auth,
         )
 
         # Wait for completion
         status = await self.wait_for_job_async(
-            job_id, max_wait_time=max_wait_time, user_token=user_token
+            job_id, max_wait_time=max_wait_time, auth=auth
         )
 
         # Fetch results for each statement, auto-paginating across pages
         results = []
         for statement in status.statements:
             pages = self._iter_result_pages_async(
-                job_id, statement.id, page_size, max_rows, user_token
+                job_id, statement.id, page_size, max_rows, auth
             )
             results.append(await self._merge_result_pages_async(pages))
 
@@ -967,7 +970,7 @@ class Client:
         refresh_metadata_on_success: bool = False,
         page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
         max_rows: int | None = None,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> Generator[QueryResult, None, None]:
         """Execute query and yield result pages lazily.
 
@@ -991,7 +994,7 @@ class Client:
             page_size: Internal page size for fetching results (default 5000)
             max_rows: Optional cap on total rows fetched per statement.
                 Defaults to ``None`` (no limit).
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Yields:
             QueryResult pages, one per API response, for each statement
@@ -1011,16 +1014,14 @@ class Client:
             actor_type=actor_type,
             session_id=session_id,
             refresh_metadata_on_success=refresh_metadata_on_success,
-            user_token=user_token,
+            auth=auth,
         )
 
-        status = self.wait_for_job(
-            job_id, max_wait_time=max_wait_time, user_token=user_token
-        )
+        status = self.wait_for_job(job_id, max_wait_time=max_wait_time, auth=auth)
 
         for statement in status.statements:
             yield from self._iter_result_pages(
-                job_id, statement.id, page_size, max_rows, user_token
+                job_id, statement.id, page_size, max_rows, auth
             )
 
     async def execute_query_iter_async(
@@ -1036,7 +1037,7 @@ class Client:
         refresh_metadata_on_success: bool = False,
         page_size: int = DEFAULT_EXECUTE_QUERY_PAGE_SIZE,
         max_rows: int | None = None,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> AsyncIterator[QueryResult]:
         """Execute query and yield result pages lazily (async version).
 
@@ -1052,16 +1053,16 @@ class Client:
             actor_type=actor_type,
             session_id=session_id,
             refresh_metadata_on_success=refresh_metadata_on_success,
-            user_token=user_token,
+            auth=auth,
         )
 
         status = await self.wait_for_job_async(
-            job_id, max_wait_time=max_wait_time, user_token=user_token
+            job_id, max_wait_time=max_wait_time, auth=auth
         )
 
         for statement in status.statements:
             async for page in self._iter_result_pages_async(
-                job_id, statement.id, page_size, max_rows, user_token
+                job_id, statement.id, page_size, max_rows, auth
             ):
                 yield page
 
@@ -1070,14 +1071,14 @@ class Client:
         query_job_id: str,
         statement_id: str,
         *,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Stream results as NDJSON.
 
         Args:
             query_job_id: Query job ID
             statement_id: Statement ID
-            user_token: Optional app user token, sent instead of the Storage API token
+            auth: Credential or provider for this call instead of the client's auth
 
         Yields:
             Parsed JSON objects from the NDJSON stream
@@ -1085,7 +1086,7 @@ class Client:
         with self._client.stream(
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results/stream",
-            headers=self._auth_headers(user_token),
+            headers=self._auth_headers(auth),
         ) as response:
             if response.status_code >= 400:
                 # Read full response for error handling
@@ -1103,7 +1104,7 @@ class Client:
         query_job_id: str,
         statement_id: str,
         *,
-        user_token: str | None = None,
+        auth: Auth | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream results as NDJSON (async version)."""
         client = self._get_async_client()
@@ -1111,7 +1112,7 @@ class Client:
         async with client.stream(
             "GET",
             f"/api/v1/queries/{query_job_id}/{statement_id}/results/stream",
-            headers=self._auth_headers(user_token),
+            headers=self._auth_headers(auth),
         ) as response:
             if response.status_code >= 400:
                 await response.aread()

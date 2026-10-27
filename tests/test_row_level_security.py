@@ -5,7 +5,10 @@ from pytest_httpx import HTTPXMock
 
 from keboola_query_service import (
     ROW_LEVEL_SECURITY_DENIED_MESSAGE,
+    AppUserToken,
+    BearerToken,
     Client,
+    Credential,
     QueryServiceError,
     RowLevelSecurityError,
 )
@@ -165,10 +168,12 @@ def test_non_json_body_with_denied_text_stays_plain_query_service_error(
 
 
 @pytest.mark.parametrize(
-    "user_token", [None, "user-a"], ids=["storage-token-only", "with-user-token"]
+    "auth",
+    [None, AppUserToken("user-a"), BearerToken("kbc_pat_abc", project_id=1)],
+    ids=["client-storage-token", "app-user-token", "bearer-token"],
 )
-def test_refusal_does_not_depend_on_user_token(
-    client: Client, httpx_mock: HTTPXMock, user_token: str | None
+def test_refusal_does_not_depend_on_auth(
+    client: Client, httpx_mock: HTTPXMock, auth: Credential | None
 ):
     httpx_mock.add_response(
         method="POST",
@@ -182,7 +187,7 @@ def test_refusal_does_not_depend_on_user_token(
             branch_id="123",
             workspace_id="456",
             statements=["SELECT 1"],
-            user_token=user_token,
+            auth=auth,
         )
 
 

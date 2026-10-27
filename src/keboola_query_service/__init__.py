@@ -99,6 +99,7 @@ Classes
 - ``JobStatus`` - Job status information
 - ``Column`` - Column metadata (name, type)
 - ``Statement`` - Statement execution info
+- ``StorageToken``, ``BearerToken``, ``AppUserToken`` - Credentials
 
 Exceptions
 ----------
@@ -112,6 +113,14 @@ Exceptions
 """
 
 from ._version import __version__
+from .auth import (
+    AppUserToken,
+    Auth,
+    BearerToken,
+    Credential,
+    CredentialProvider,
+    StorageToken,
+)
 from .client import Client
 from .exceptions import (
     ROW_LEVEL_SECURITY_DENIED_MESSAGE,
@@ -137,6 +146,12 @@ from .models import (
 __all__ = [
     "__version__",
     "Client",
+    "StorageToken",
+    "BearerToken",
+    "AppUserToken",
+    "Credential",
+    "CredentialProvider",
+    "Auth",
     "ActorType",
     "JobState",
     "StatementState",
