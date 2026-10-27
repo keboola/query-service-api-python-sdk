@@ -221,11 +221,20 @@ credentials:
 | `AppUserToken(token)` | `X-Kbc-App-User-Token` (works with any workspace) |
 
 A request always sends the headers of exactly one credential, never two.
+`credential_headers()` gives the headers of a credential.
 
-`auth=` also takes a **provider**: a callable with no arguments that returns a
-credential. The client calls it before every request, retries included, in the
-sync and the async methods. `execute_query_iter()` and `stream_results()` call
-it when you start reading, not when you call them.
+There are two levels, and both are read before every request, retries included,
+in the sync and the async methods:
+
+- **The token of a credential** is a value or a callable with no arguments that
+  returns the current value. The SDK checks the value each time (non-empty,
+  printable ASCII, no spaces) and raises `ValidationError` before it sends
+  anything.
+- **The credential of the client** (`auth=`) is a credential or a **provider**:
+  a callable with no arguments that returns a credential.
+
+`execute_query_iter()` and `stream_results()` read them when you start reading,
+not when you call them.
 
 #### 1. A static token: scripts, jobs, single-tenant servers
 
@@ -246,7 +255,24 @@ pat_client = Client(
 )
 ```
 
-#### 2. A server with a credential for each incoming request
+#### 2. A token that changes: a rotated token file
+
+```python
+from pathlib import Path
+
+from keboola_query_service import Client, StorageToken
+
+token_file = Path("/var/run/secrets/kbc/token")
+
+client = Client(
+    base_url="https://query.keboola.com",
+    auth=StorageToken(lambda: token_file.read_text().strip()),
+)
+```
+
+Each request reads the file again, so a new token is used from the next request.
+
+#### 3. A server with a credential for each incoming request
 
 A middleware puts the credential of the request into a `ContextVar`. One shared
 client reads it through a provider. Each request and each retry calls the
@@ -302,7 +328,7 @@ def orders() -> list[list[object]]:
 Code outside a request (start-up code, background jobs) gets the default, the
 server's Storage token.
 
-#### 3. A per-call override
+#### 4. A per-call override
 
 Every method that calls Query Service takes a keyword-only `auth=` (a
 credential or a provider). It replaces the client's `auth` for that one call.
