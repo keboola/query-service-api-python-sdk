@@ -120,6 +120,7 @@ from .auth import (
     Credential,
     CredentialProvider,
     StorageToken,
+    TokenSource,
 )
 from .client import Client
 from .exceptions import (
@@ -152,6 +153,7 @@ __all__ = [
     "Credential",
     "CredentialProvider",
     "Auth",
+    "TokenSource",
     "ActorType",
     "JobState",
     "StatementState",

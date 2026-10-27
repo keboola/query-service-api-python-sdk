@@ -20,6 +20,7 @@ from keboola_query_service import (
     Credential,
     QueryServiceError,
     StorageToken,
+    ValidationError,
 )
 
 BASE_URL = "https://query.test.keboola.com"
@@ -403,6 +404,171 @@ class TestRequestScopedProvider:
         assert current.get() is server_auth
 
 
+CREDENTIAL_TYPES: dict[
+    str, tuple[Callable[[Any], Credential], Callable[[str], dict[str, str]]]
+] = {
+    "storage-token": (
+        StorageToken,
+        lambda value: {"X-StorageAPI-Token": value},
+    ),
+    "bearer-token": (
+        lambda token: BearerToken(token, project_id=123),
+        lambda value: {"Authorization": f"Bearer {value}", "X-KBC-ProjectId": "123"},
+    ),
+    "app-user-token": (
+        AppUserToken,
+        lambda value: {"X-Kbc-App-User-Token": value},
+    ),
+}
+
+
+class TestTokenCallback:
+    @pytest.mark.parametrize(
+        ("make", "headers"), CREDENTIAL_TYPES.values(), ids=CREDENTIAL_TYPES.keys()
+    )
+    def test_value_and_callback_give_the_same_headers(
+        self,
+        make: Callable[[Any], Credential],
+        headers: Callable[[str], dict[str, str]],
+    ):
+        assert make("tok").credential_headers() == headers("tok")
+        assert make(lambda: "tok").credential_headers() == headers("tok")
+
+    def test_called_before_every_request(self, query_service: HTTPXMock):
+        calls = 0
+
+        def read_token() -> str:
+            nonlocal calls
+            calls += 1
+            return "storage-token"
+
+        Client(BASE_URL, auth=StorageToken(read_token)).execute_query(**STATEMENTS)
+
+        assert calls == len(query_service.get_requests()) == 3
+
+    @pytest.mark.parametrize("mode", ["sync", "async"])
+    async def test_called_before_every_retry(self, httpx_mock: HTTPXMock, mode: str):
+        httpx_mock.add_response(status_code=503, json={"exception": "busy"})
+        httpx_mock.add_response(status_code=201, json={"queryJobId": "job-1"})
+        values = iter(["first", "second"])
+        client = Client(BASE_URL, auth=StorageToken(lambda: next(values)))
+
+        if mode == "sync":
+            client.submit_job(**STATEMENTS)
+        else:
+            await client.submit_job_async(**STATEMENTS)
+        await client.close_async()
+
+        assert sent_credentials(httpx_mock) == [
+            {"X-StorageAPI-Token": "first"},
+            {"X-StorageAPI-Token": "second"},
+        ]
+
+    def test_rotated_token_is_used_by_the_next_request(self, query_service: HTTPXMock):
+        token_file = {"value": "old-token"}
+        client = Client(BASE_URL, auth=StorageToken(lambda: token_file["value"]))
+
+        client.submit_job(**STATEMENTS)
+        token_file["value"] = "new-token"
+        client.submit_job(**STATEMENTS)
+
+        assert sent_credentials(query_service) == [
+            {"X-StorageAPI-Token": "old-token"},
+            {"X-StorageAPI-Token": "new-token"},
+        ]
+
+    @pytest.mark.parametrize(
+        "value",
+        ["", "sec ret", "secret\n", "seč-secret", 123, None],
+        ids=["empty", "space", "newline", "non-ascii", "int", "none"],
+    )
+    @pytest.mark.parametrize("call", ["submit_job", "stream_results"])
+    def test_invalid_callback_value_is_refused_before_sending(
+        self, httpx_mock: HTTPXMock, value: object, call: str
+    ):
+        client = Client(BASE_URL, auth=AppUserToken(lambda: value))  # type: ignore[arg-type,return-value]
+
+        with pytest.raises(ValidationError) as exc_info:
+            SYNC_CALLS[call](client)
+
+        assert httpx_mock.get_requests() == []
+        assert "sec" not in str(exc_info.value)
+
+    @pytest.mark.parametrize("call", ["submit_job_async", "stream_results_async"])
+    async def test_invalid_callback_value_is_refused_before_sending_async(
+        self, httpx_mock: HTTPXMock, call: str
+    ):
+        client = Client(BASE_URL, auth=AppUserToken(lambda: "sec ret"))
+
+        with pytest.raises(ValidationError):
+            await ASYNC_CALLS[call](client)
+        await client.close_async()
+
+        assert httpx_mock.get_requests() == []
+
+    def test_provider_picks_credential_and_callback_gives_its_value(
+        self, query_service: HTTPXMock
+    ):
+        server_token = {"value": "server-1"}
+        server_auth = StorageToken(lambda: server_token["value"])
+        current: ContextVar[Credential] = ContextVar("current", default=server_auth)
+        client = Client(BASE_URL, auth=lambda: current.get())
+
+        client.submit_job(**STATEMENTS)
+        server_token["value"] = "server-2"
+        current.set(AppUserToken(lambda: "user-a"))
+        client.submit_job(**STATEMENTS)
+        current.set(server_auth)
+        client.submit_job(**STATEMENTS)
+
+        assert sent_credentials(query_service) == [
+            {"X-StorageAPI-Token": "server-1"},
+            {"X-Kbc-App-User-Token": "user-a"},
+            {"X-StorageAPI-Token": "server-2"},
+        ]
+
+    @pytest.mark.parametrize("call", SYNC_CALLS.values(), ids=SYNC_CALLS.keys())
+    def test_used_on_every_sync_method(self, query_service: HTTPXMock, call: SyncCall):
+        call(Client(BASE_URL, auth=AppUserToken(lambda: "user-a")))
+
+        assert sent_credentials(query_service)
+        assert all(
+            sent == {"X-Kbc-App-User-Token": "user-a"}
+            for sent in sent_credentials(query_service)
+        )
+
+    @pytest.mark.parametrize("call", ASYNC_CALLS.values(), ids=ASYNC_CALLS.keys())
+    async def test_used_on_every_async_method(
+        self, query_service: HTTPXMock, call: AsyncCall
+    ):
+        client = Client(BASE_URL, auth=AppUserToken(lambda: "user-a"))
+
+        await call(client)
+        await client.close_async()
+
+        assert sent_credentials(query_service)
+        assert all(
+            sent == {"X-Kbc-App-User-Token": "user-a"}
+            for sent in sent_credentials(query_service)
+        )
+
+    @pytest.mark.parametrize(
+        ("make", "headers"), CREDENTIAL_TYPES.values(), ids=CREDENTIAL_TYPES.keys()
+    )
+    def test_callback_credential_repr_hides_token(
+        self,
+        make: Callable[[Any], Credential],
+        headers: Callable[[str], dict[str, str]],
+    ):
+        def read_secret_token() -> str:
+            return "secret-token"
+
+        credential = make(read_secret_token)
+
+        assert "secret" not in repr(credential)
+        assert "secret" not in str(credential)
+
+
 class TestClientArguments:
     def test_token_string_means_storage_token(self, query_service: HTTPXMock):
         Client(BASE_URL, "storage-token").submit_job(**STATEMENTS)
@@ -429,7 +595,7 @@ class TestClientArguments:
         ids=["empty-storage", "empty-bearer", "bad-project-id", "empty-app-user"],
     )
     def test_invalid_credential_is_an_error(self, make: Callable[[], Credential]):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             make()
 
 
@@ -443,13 +609,13 @@ class TestTokenIsNotExposed:
     def test_unsendable_token_is_refused_without_echo(
         self, credential_type: Callable[[str], Credential], token: str
     ):
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValidationError) as exc_info:
             credential_type(token)
 
         assert "sec" not in str(exc_info.value)
 
     def test_unsendable_bearer_token_is_refused_without_echo(self):
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValidationError) as exc_info:
             BearerToken("secret\n", project_id=1)
 
         assert "secret" not in str(exc_info.value)
