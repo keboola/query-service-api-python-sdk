@@ -209,22 +209,55 @@ except TimeoutError as e:
     print(f"Job {e.job_id} timed out")
 ```
 
-### Sending the App User Token
+### Credentials
 
-Every method that calls Query Service accepts a keyword-only `user_token=`. The
-call then sends the app user token in the `X-Kbc-App-User-Token` header
-instead of the Storage API token. A call sends one token, never both. This
-works with any workspace. The client never stores the token. Without
-`user_token=`, the call sends the Storage API token as before.
+`token="..."` is short for `auth=StorageToken("...")`. Use `auth=` for the other
+credentials:
+
+| Credential | Headers |
+|------------|---------|
+| `StorageToken(token)` | `X-StorageAPI-Token` |
+| `BearerToken(token, project_id)` | `Authorization: Bearer <token>` and `X-KBC-ProjectId` (programmatic tokens `kbc_pat_`/`kbc_at_`) |
+| `AppUserToken(token)` | `X-Kbc-App-User-Token` (works with any workspace) |
+
+A request always sends the headers of exactly one credential, never two.
+
+```python
+from keboola_query_service import AppUserToken, BearerToken, Client, StorageToken
+
+client = Client(base_url="https://query.keboola.com", auth=StorageToken("your-token"))
+client = Client(
+    base_url="https://query.keboola.com",
+    auth=BearerToken("kbc_pat_...", project_id=123),
+)
+```
+
+**Provider.** `auth=` also takes a callable with no arguments that returns a
+credential. The client calls it before every request, retries included, in sync
+and async methods. Use it for a token that changes, for example one that is
+read from a file:
+
+```python
+client = Client(
+    base_url="https://query.keboola.com",
+    auth=lambda: StorageToken(token_file.read_text().strip()),
+)
+```
+
+**Per-call override.** Every method that calls Query Service takes a
+keyword-only `auth=` (a credential or a provider). It replaces the client's
+`auth` for that call only. The client does not store it:
 
 ```python
 results = client.execute_query(
     branch_id="123",
     workspace_id="456",
     statements=["SELECT * FROM orders"],
-    user_token=app_user_token,
+    auth=AppUserToken(app_user_token),
 )
 ```
+
+The SDK never logs a token and never puts one into `repr()` or an error.
 
 ### Row-Level Security Refusal
 
@@ -289,7 +322,7 @@ client = Client(
 | `stream_results()` | Stream results as NDJSON |
 
 All methods have async variants with `_async` suffix, and all accept
-`user_token=`.
+`auth=`.
 
 ### Models
 
