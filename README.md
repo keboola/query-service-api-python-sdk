@@ -211,10 +211,11 @@ except TimeoutError as e:
 
 ### Sending the App User Token
 
-Every method that calls Query Service accepts a keyword-only `user_token=`. It
-sends the app user token in the `X-Kbc-App-User-Token` header, next to the
-Storage API token. This works with any workspace. The client never stores the
-token. Without it, nothing changes.
+Every method that calls Query Service accepts a keyword-only `user_token=`. The
+call then sends the app user token in the `X-Kbc-App-User-Token` header
+instead of the Storage API token. A call sends one token, never both. This
+works with any workspace. The client never stores the token. Without
+`user_token=`, the call sends the Storage API token as before.
 
 ```python
 results = client.execute_query(
