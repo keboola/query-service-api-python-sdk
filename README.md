@@ -209,14 +209,28 @@ except TimeoutError as e:
     print(f"Job {e.job_id} timed out")
 ```
 
-### App User Token and Row-Level Security
+### Sending the App User Token
 
 Every method that calls Query Service accepts a keyword-only `user_token=`. It
 sends the app user token in the `X-Kbc-App-User-Token` header, next to the
-Storage API token. The client never stores it. Without it, nothing changes.
+Storage API token. This works with any workspace. The client never stores the
+token. Without it, nothing changes.
+
+```python
+results = client.execute_query(
+    branch_id="123",
+    workspace_id="456",
+    statements=["SELECT * FROM orders"],
+    user_token=app_user_token,
+)
+```
+
+### Row-Level Security Refusal
 
 When row-level security refuses a query, the SDK raises `RowLevelSecurityError`,
-a subclass of `QueryServiceError` (status 403). Other errors do not change.
+a subclass of `QueryServiceError` (status 403). A governed workspace refuses
+every query whose caller matches no policy. A call with only the Storage API
+token gets this error too. Other errors do not change.
 
 ```python
 from keboola_query_service import RowLevelSecurityError
@@ -226,7 +240,6 @@ try:
         branch_id="123",
         workspace_id="456",
         statements=["SELECT * FROM orders"],
-        user_token=app_user_token,
     )
 except RowLevelSecurityError:
     print("No access to this data")

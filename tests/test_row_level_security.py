@@ -164,7 +164,12 @@ def test_non_json_body_with_denied_text_stays_plain_query_service_error(
     assert type(exc_info.value) is QueryServiceError
 
 
-def test_refusal_with_user_token(client: Client, httpx_mock: HTTPXMock):
+@pytest.mark.parametrize(
+    "user_token", [None, "user-a"], ids=["storage-token-only", "with-user-token"]
+)
+def test_refusal_does_not_depend_on_user_token(
+    client: Client, httpx_mock: HTTPXMock, user_token: str | None
+):
     httpx_mock.add_response(
         method="POST",
         url=SUBMIT_URL,
@@ -177,7 +182,7 @@ def test_refusal_with_user_token(client: Client, httpx_mock: HTTPXMock):
             branch_id="123",
             workspace_id="456",
             statements=["SELECT 1"],
-            user_token="user-a",
+            user_token=user_token,
         )
 
 

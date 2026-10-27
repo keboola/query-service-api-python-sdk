@@ -75,7 +75,9 @@ ROW_LEVEL_SECURITY_DENIED_MESSAGE = "Row-level security does not allow this quer
 class RowLevelSecurityError(QueryServiceError):
     """Raised when row-level security refuses a query on a governed workspace (403).
 
-    The refusal does not say whether a policy is missing or the access is denied.
+    A governed workspace refuses every query whose caller matches no policy, also
+    a call with only the Storage API token. The refusal does not say whether a
+    policy is missing or the access is denied.
     """
 
     pass
