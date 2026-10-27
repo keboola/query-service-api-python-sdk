@@ -218,9 +218,11 @@ credentials:
 |------------|---------|
 | `StorageToken(token)` | `X-StorageAPI-Token` |
 | `BearerToken(token, project_id)` | `Authorization: Bearer <token>` and `X-KBC-ProjectId` (programmatic tokens `kbc_pat_`/`kbc_at_`) |
-| `AppUserToken(token)` | `X-Kbc-App-User-Token` (works with any workspace) |
+| `AppUserToken(token, storage_token=StorageToken(...))` | `X-Kbc-App-User-Token` and `X-StorageAPI-Token` (works with any workspace) |
 
-A request always sends the headers of exactly one credential, never two.
+A request always sends the headers of exactly one credential. `AppUserToken` is
+the app user token together with the app's Storage token, so it sends both
+headers; the Storage token argument is required.
 `credential_headers()` gives the headers of a credential.
 
 There are two levels, and both are read before every request, retries included,
@@ -278,8 +280,9 @@ A middleware puts the credential of the request into a `ContextVar`. One shared
 client reads it through a provider. Each request and each retry calls the
 provider, so one shared client is safe for many users at the same time.
 
-This FastAPI example sends the app user token when the request has the
-`X-Kbc-App-User-Token` header, and the server's Storage token when it does not:
+This FastAPI example sends the app user token together with the server's Storage
+token when the request has the `X-Kbc-App-User-Token` header, and only the
+server's Storage token when it does not:
 
 ```python
 import os
@@ -307,7 +310,9 @@ async def set_query_service_auth(
 ) -> Response:
     app_user_token = request.headers.get("X-Kbc-App-User-Token")
     token = current_auth.set(
-        AppUserToken(app_user_token) if app_user_token else server_auth
+        AppUserToken(app_user_token, storage_token=server_auth)
+        if app_user_token
+        else server_auth
     )
     try:
         return await call_next(request)
@@ -339,7 +344,7 @@ results = client.execute_query(
     branch_id="123",
     workspace_id="456",
     statements=["SELECT * FROM orders"],
-    auth=AppUserToken(app_user_token),
+    auth=AppUserToken(app_user_token, storage_token=server_auth),
 )
 ```
 
