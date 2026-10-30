@@ -190,6 +190,7 @@ for row in client.stream_results(job_id, statement_id):
 from keboola_query_service import (
     Client,
     AuthenticationError,
+    CredentialError,
     ValidationError,
     JobError,
     TimeoutError,
@@ -197,6 +198,8 @@ from keboola_query_service import (
 
 try:
     results = client.execute_query(...)
+except CredentialError as e:
+    print(f"The credential cannot be used, nothing was sent: {e.message}")
 except AuthenticationError:
     print("Invalid token")
 except ValidationError as e:
@@ -207,6 +210,187 @@ except JobError as e:
         print(f"  Statement {stmt['id']}: {stmt['error']}")
 except TimeoutError as e:
     print(f"Job {e.job_id} timed out")
+```
+
+### Credentials
+
+`token="..."` is short for `auth=StorageToken("...")`. Use `auth=` for the other
+credentials:
+
+| Credential | Headers |
+|------------|---------|
+| `StorageToken(token)` | `X-StorageAPI-Token` |
+| `BearerToken(token, project_id)` | `Authorization: Bearer <token>` and `X-KBC-ProjectId` (programmatic tokens `kbc_pat_`/`kbc_at_`) |
+| `AppUserToken(token, storage_token=StorageToken(...))` | `X-Kbc-App-User-Token` and `X-StorageAPI-Token` (works with any workspace) |
+
+A request always sends the headers of exactly one credential. `AppUserToken` is
+the app user token together with the app's Storage token, so it sends both
+headers; the Storage token argument is required.
+`credential_headers()` gives the headers of a credential.
+
+There are two levels, and both are read before every request, retries included,
+in the sync and the async methods:
+
+- **The token of a credential** is a value or a callable with no arguments that
+  returns the current value. The SDK checks the value each time (non-empty,
+  printable ASCII, no spaces) and raises `CredentialError` before it sends
+  anything. `CredentialError` is not a `ValidationError` (a 400 from the server),
+  so a handler for bad queries never reports a token problem.
+- **The credential of the client** (`auth=`) is a credential or a **provider**:
+  a callable with no arguments that returns a credential.
+
+`execute_query_iter()` and `stream_results()` read them when you start reading,
+not when you call them.
+
+**A bad credential fails when the client is created.** `Client(url, "")` or a
+`token` that cannot be sent raises `CredentialError` in the constructor, not a 401
+on the first request, so code that builds a client at import time from an unset
+environment variable now fails there. A callable that later returns an empty or
+unsendable value raises `CredentialError` when it is read, before the request.
+Credentials are immutable: `copy.copy()` and `copy.deepcopy()` return the same
+object, and pickling one raises `TypeError` on purpose, as a token must never be
+serialised.
+
+#### 1. A static token: scripts, jobs, single-tenant servers
+
+```python
+import os
+
+from keboola_query_service import BearerToken, Client, StorageToken
+
+client = Client(
+    base_url="https://query.keboola.com",
+    auth=StorageToken(os.environ["KBC_TOKEN"]),
+)
+
+# A programmatic token (kbc_pat_/kbc_at_) needs the project ID:
+pat_client = Client(
+    base_url="https://query.keboola.com",
+    auth=BearerToken(os.environ["KBC_PAT"], project_id=123),
+)
+```
+
+#### 2. A token that changes: a rotated token file
+
+```python
+from pathlib import Path
+
+from keboola_query_service import Client, StorageToken
+
+token_file = Path("/var/run/secrets/kbc/token")
+
+client = Client(
+    base_url="https://query.keboola.com",
+    auth=StorageToken(lambda: token_file.read_text().strip()),
+)
+```
+
+Each request reads the file again, so a new token is used from the next request.
+
+#### 3. A server with a credential for each incoming request
+
+A middleware puts the credential of the request into a `ContextVar`. One shared
+client reads it through a provider. Each request and each retry calls the
+provider, so one shared client is safe for many users at the same time.
+
+This FastAPI example sends the app user token together with the server's Storage
+token when the request has the `X-Kbc-App-User-Token` header, and only the
+server's Storage token when it does not:
+
+```python
+import os
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+
+from fastapi import FastAPI, Request, Response
+
+from keboola_query_service import AppUserToken, Client, Credential, StorageToken
+
+server_auth = StorageToken(os.environ["KBC_TOKEN"])
+current_auth: ContextVar[Credential] = ContextVar("current_auth", default=server_auth)
+
+client = Client(
+    base_url=os.environ["QUERY_SERVICE_URL"],
+    auth=lambda: current_auth.get(),
+)
+
+app = FastAPI()
+
+
+@app.middleware("http")
+async def set_query_service_auth(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    app_user_token = request.headers.get("X-Kbc-App-User-Token")
+    token = current_auth.set(
+        AppUserToken(app_user_token, storage_token=server_auth)
+        if app_user_token
+        else server_auth
+    )
+    try:
+        return await call_next(request)
+    finally:
+        current_auth.reset(token)
+
+
+@app.get("/orders")
+def orders() -> list[list[object]]:
+    results = client.execute_query(
+        branch_id=os.environ["BRANCH_ID"],
+        workspace_id=os.environ["WORKSPACE_ID"],
+        statements=["SELECT * FROM orders"],
+    )
+    return results[0].data
+```
+
+Code outside a request (start-up code, background jobs) gets the default, the
+server's Storage token.
+
+#### 4. A per-call override
+
+Every method that calls Query Service takes a keyword-only `auth=` (a
+credential or a provider). It replaces the client's `auth` for that one call.
+The client does not store it:
+
+```python
+results = client.execute_query(
+    branch_id="123",
+    workspace_id="456",
+    statements=["SELECT * FROM orders"],
+    auth=AppUserToken(app_user_token, storage_token=server_auth),
+)
+```
+
+The SDK never logs a token and never puts one into `repr()` or an error.
+
+### Row-Level Security Refusal
+
+When row-level security refuses a query, the SDK raises `RowLevelSecurityError`,
+a subclass of `QueryServiceError` (status 403). A governed workspace refuses
+every query whose caller matches no policy. A call with only the Storage API
+token gets this error too. Other errors do not change.
+
+Query Service does not refuse every caller this way (an older Query Service
+refuses an app user too; the behavior below comes with its next release). For a table with no policy,
+or a policy that selects the caller by no rule and has no default, an
+**administrator** (a Storage API token) gets `RowLevelSecurityError`, but an
+**app user** (an app user token) gets a successful result with no rows, so for an
+app user an empty result can also mean "no access". `RowLevelSecurityError` is
+raised only where Query Service refuses: an administrator, a statement that is not
+allowed in a governed workspace (such as `SHOW` or `INFORMATION_SCHEMA`), and a
+table that a column policy withholds from the caller.
+
+```python
+from keboola_query_service import RowLevelSecurityError
+
+try:
+    results = client.execute_query(
+        branch_id="123",
+        workspace_id="456",
+        statements=["SELECT * FROM orders"],
+    )
+except RowLevelSecurityError:
+    print("No access to this data")
 ```
 
 ### Query History
@@ -251,7 +435,8 @@ client = Client(
 | `get_query_history()` | Get query history for workspace |
 | `stream_results()` | Stream results as NDJSON |
 
-All methods have async variants with `_async` suffix.
+All methods have async variants with `_async` suffix, and all accept
+`auth=`.
 
 ### Models
 

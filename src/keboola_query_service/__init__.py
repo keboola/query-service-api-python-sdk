@@ -99,25 +99,40 @@ Classes
 - ``JobStatus`` - Job status information
 - ``Column`` - Column metadata (name, type)
 - ``Statement`` - Statement execution info
+- ``StorageToken``, ``BearerToken``, ``AppUserToken`` - Credentials
 
 Exceptions
 ----------
 - ``QueryServiceError`` - Base exception
 - ``AuthenticationError`` - Invalid token (401)
+- ``CredentialError`` - A credential cannot be used; nothing was sent
 - ``ValidationError`` - Invalid request (400)
 - ``NotFoundError`` - Resource not found (404)
 - ``JobError`` - Query execution failed
 - ``JobTimeoutError`` - Job didn't complete in time
+- ``RowLevelSecurityError`` - Row-level security refused the query (403)
 """
 
 from ._version import __version__
+from .auth import (
+    AppUserToken,
+    Auth,
+    BearerToken,
+    Credential,
+    CredentialProvider,
+    StorageToken,
+    TokenSource,
+)
 from .client import Client
 from .exceptions import (
+    ROW_LEVEL_SECURITY_DENIED_MESSAGE,
     AuthenticationError,
+    CredentialError,
     JobError,
     JobTimeoutError,
     NotFoundError,
     QueryServiceError,
+    RowLevelSecurityError,
     ValidationError,
 )
 from .models import (
@@ -134,6 +149,13 @@ from .models import (
 __all__ = [
     "__version__",
     "Client",
+    "StorageToken",
+    "BearerToken",
+    "AppUserToken",
+    "Credential",
+    "CredentialProvider",
+    "Auth",
+    "TokenSource",
     "ActorType",
     "JobState",
     "StatementState",
@@ -144,8 +166,11 @@ __all__ = [
     "QueryHistory",
     "QueryServiceError",
     "AuthenticationError",
+    "CredentialError",
     "ValidationError",
     "NotFoundError",
     "JobError",
     "JobTimeoutError",
+    "RowLevelSecurityError",
+    "ROW_LEVEL_SECURITY_DENIED_MESSAGE",
 ]
