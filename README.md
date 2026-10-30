@@ -190,6 +190,7 @@ for row in client.stream_results(job_id, statement_id):
 from keboola_query_service import (
     Client,
     AuthenticationError,
+    CredentialError,
     ValidationError,
     JobError,
     TimeoutError,
@@ -197,6 +198,8 @@ from keboola_query_service import (
 
 try:
     results = client.execute_query(...)
+except CredentialError as e:
+    print(f"The credential cannot be used, nothing was sent: {e.message}")
 except AuthenticationError:
     print("Invalid token")
 except ValidationError as e:
@@ -230,13 +233,23 @@ in the sync and the async methods:
 
 - **The token of a credential** is a value or a callable with no arguments that
   returns the current value. The SDK checks the value each time (non-empty,
-  printable ASCII, no spaces) and raises `ValidationError` before it sends
-  anything.
+  printable ASCII, no spaces) and raises `CredentialError` before it sends
+  anything. `CredentialError` is not a `ValidationError` (a 400 from the server),
+  so a handler for bad queries never reports a token problem.
 - **The credential of the client** (`auth=`) is a credential or a **provider**:
   a callable with no arguments that returns a credential.
 
 `execute_query_iter()` and `stream_results()` read them when you start reading,
 not when you call them.
+
+**A bad credential fails when the client is created.** `Client(url, "")` or a
+`token` that cannot be sent raises `CredentialError` in the constructor, not a 401
+on the first request, so code that builds a client at import time from an unset
+environment variable now fails there. A callable that later returns an empty or
+unsendable value raises `CredentialError` when it is read, before the request.
+Credentials are immutable: `copy.copy()` and `copy.deepcopy()` return the same
+object, and pickling one raises `TypeError` on purpose, as a token must never be
+serialised.
 
 #### 1. A static token: scripts, jobs, single-tenant servers
 
@@ -356,6 +369,16 @@ When row-level security refuses a query, the SDK raises `RowLevelSecurityError`,
 a subclass of `QueryServiceError` (status 403). A governed workspace refuses
 every query whose caller matches no policy. A call with only the Storage API
 token gets this error too. Other errors do not change.
+
+Query Service does not refuse every caller this way (an older Query Service
+refuses an app user too; the behavior below comes with its next release). For a table with no policy,
+or a policy that selects the caller by no rule and has no default, an
+**administrator** (a Storage API token) gets `RowLevelSecurityError`, but an
+**app user** (an app user token) gets a successful result with no rows, so for an
+app user an empty result can also mean "no access". `RowLevelSecurityError` is
+raised only where Query Service refuses: an administrator, a statement that is not
+allowed in a governed workspace (such as `SHOW` or `INFORMATION_SCHEMA`), and a
+table that a column policy withholds from the caller.
 
 ```python
 from keboola_query_service import RowLevelSecurityError

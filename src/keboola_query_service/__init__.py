@@ -105,6 +105,7 @@ Exceptions
 ----------
 - ``QueryServiceError`` - Base exception
 - ``AuthenticationError`` - Invalid token (401)
+- ``CredentialError`` - A credential cannot be used; nothing was sent
 - ``ValidationError`` - Invalid request (400)
 - ``NotFoundError`` - Resource not found (404)
 - ``JobError`` - Query execution failed
@@ -126,6 +127,7 @@ from .client import Client
 from .exceptions import (
     ROW_LEVEL_SECURITY_DENIED_MESSAGE,
     AuthenticationError,
+    CredentialError,
     JobError,
     JobTimeoutError,
     NotFoundError,
@@ -164,6 +166,7 @@ __all__ = [
     "QueryHistory",
     "QueryServiceError",
     "AuthenticationError",
+    "CredentialError",
     "ValidationError",
     "NotFoundError",
     "JobError",

@@ -97,6 +97,12 @@ class Client:
             connect_timeout: Connection timeout in seconds
             max_retries: Maximum number of retries for failed requests
             user_agent: Custom user agent string
+
+        Raises:
+            CredentialError: If ``token`` or the credential of ``auth`` is empty or
+                cannot be sent. The client fails here, not with a 401 on the
+                first request.
+            ValueError: If both or none of ``token`` and ``auth`` are given.
         """
         if token is not None:
             if auth is not None:

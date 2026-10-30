@@ -1,9 +1,11 @@
 """Credentials for Keboola Query Service requests."""
 
 from collections.abc import Callable
-from typing import Any, NoReturn
+from typing import Any, NoReturn, TypeVar
 
-from .exceptions import ValidationError
+from .exceptions import CredentialError
+
+_C = TypeVar("_C", bound="_Credential")
 
 TokenSource = str | Callable[[], str]
 """A token value, or a callable that returns the current one."""
@@ -17,7 +19,7 @@ def _require_token(token: object) -> str:
         or not (token.isascii() and token.isprintable())
         or " " in token
     ):
-        raise ValidationError("token must be non-empty printable ASCII without spaces")
+        raise CredentialError("token must be non-empty printable ASCII without spaces")
     return token
 
 
@@ -46,6 +48,21 @@ class _Credential:
 
     def __setattr__(self, name: str, value: Any) -> NoReturn:
         raise AttributeError(f"{type(self).__name__} is immutable")
+
+    # A credential never changes, so a copy of it, or of a settings object that
+    # holds one, is the credential itself.
+    def __copy__(self: _C) -> _C:
+        return self
+
+    def __deepcopy__(self: _C, memo: dict[int, Any]) -> _C:
+        return self
+
+    def __reduce__(self) -> NoReturn:
+        # A pickle is a copy of the token outside of this process.
+        raise TypeError(
+            f"{type(self).__name__} cannot be pickled: "
+            "a credential must never be serialised"
+        )
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -76,7 +93,7 @@ class BearerToken(_Credential):
             or not isinstance(project_id, int)
             or project_id <= 0
         ):
-            raise ValidationError("project_id must be a positive integer")
+            raise CredentialError("project_id must be a positive integer")
         super().__init__(token)
         object.__setattr__(self, "project_id", project_id)
 
@@ -102,7 +119,7 @@ class AppUserToken(_Credential):
 
     def __init__(self, token: TokenSource, *, storage_token: StorageToken) -> None:
         if not isinstance(storage_token, StorageToken):
-            raise ValidationError("storage_token must be a StorageToken")
+            raise CredentialError("storage_token must be a StorageToken")
         super().__init__(token)
         object.__setattr__(self, "storage_token", storage_token)
 

@@ -2,8 +2,10 @@
 
 import asyncio
 import contextvars
+import copy
 import json
 import logging
+import pickle
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
@@ -18,6 +20,7 @@ from keboola_query_service import (
     BearerToken,
     Client,
     Credential,
+    CredentialError,
     QueryServiceError,
     StorageToken,
     ValidationError,
@@ -525,7 +528,7 @@ class TestTokenCallback:
             BASE_URL, auth=AppUserToken(lambda: value, storage_token=SERVER_STORAGE)
         )  # type: ignore[arg-type,return-value]
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(CredentialError) as exc_info:
             SYNC_CALLS[call](client)
 
         assert httpx_mock.get_requests() == []
@@ -539,7 +542,7 @@ class TestTokenCallback:
             BASE_URL, auth=AppUserToken(lambda: "sec ret", storage_token=SERVER_STORAGE)
         )
 
-        with pytest.raises(ValidationError):
+        with pytest.raises(CredentialError):
             await ASYNC_CALLS[call](client)
         await client.close_async()
 
@@ -677,7 +680,7 @@ class TestAppUserTokenWithStorageToken:
             "user-a", storage_token=StorageToken(lambda: "sec ret")
         )
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(CredentialError) as exc_info:
             Client(BASE_URL, auth=credential).submit_job(**STATEMENTS)
 
         assert httpx_mock.get_requests() == []
@@ -693,7 +696,7 @@ class TestAppUserTokenWithStorageToken:
         ids=["none", "string", "bearer-token"],
     )
     def test_storage_token_must_be_a_storage_token(self, storage_token: object):
-        with pytest.raises(ValidationError):
+        with pytest.raises(CredentialError):
             AppUserToken("user-a", storage_token=storage_token)  # type: ignore[arg-type]
 
     def test_repr_hides_both_tokens(self):
@@ -731,7 +734,7 @@ class TestClientArguments:
         ids=["empty-storage", "empty-bearer", "bad-project-id", "empty-app-user"],
     )
     def test_invalid_credential_is_an_error(self, make: Callable[[], Credential]):
-        with pytest.raises(ValidationError):
+        with pytest.raises(CredentialError):
             make()
 
 
@@ -749,13 +752,13 @@ class TestTokenIsNotExposed:
     def test_unsendable_token_is_refused_without_echo(
         self, credential_type: Callable[[str], Credential], token: str
     ):
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(CredentialError) as exc_info:
             credential_type(token)
 
         assert "sec" not in str(exc_info.value)
 
     def test_unsendable_bearer_token_is_refused_without_echo(self):
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(CredentialError) as exc_info:
             BearerToken("secret\n", project_id=1)
 
         assert "secret" not in str(exc_info.value)
@@ -861,3 +864,74 @@ class TestConcurrentUsers:
                 json.loads(request.content)["statements"][0]
             )
         assert len(query_service.get_requests()) == len(users)
+
+
+class TestCredentialError:
+    def test_is_a_query_service_error_but_not_a_validation_error(self):
+        assert issubclass(CredentialError, QueryServiceError)
+        assert not issubclass(CredentialError, ValidationError)
+
+    @pytest.mark.parametrize(
+        "token", ["", " ", "sec ret"], ids=["empty", "blank", "space"]
+    )
+    def test_client_refuses_an_unusable_token_when_created(self, token: str):
+        with pytest.raises(CredentialError) as exc_info:
+            Client(BASE_URL, token)
+
+        assert exc_info.value.status_code is None
+        assert "sec" not in str(exc_info.value)
+
+    def test_a_validation_error_handler_does_not_catch_it(self):
+        with pytest.raises(CredentialError):
+            try:
+                Client(BASE_URL, "")
+            except ValidationError:  # pragma: no cover - must not be reached
+                pytest.fail("a credential problem was reported as a request problem")
+
+    def test_empty_callback_value_is_a_credential_error_when_read(self):
+        credential = StorageToken(lambda: "")
+
+        with pytest.raises(CredentialError):
+            credential.credential_headers()
+
+
+CREDENTIALS = [
+    lambda: StorageToken("storage-token"),
+    lambda: BearerToken("kbc_pat_abc", project_id=1),
+    lambda: AppUserToken("user-a", storage_token=StorageToken("storage-token")),
+]
+CREDENTIAL_IDS = ["storage", "bearer", "app-user"]
+
+
+class TestCredentialCopyAndPickle:
+    @pytest.mark.parametrize("make", CREDENTIALS, ids=CREDENTIAL_IDS)
+    def test_copy_and_deepcopy_return_the_credential(
+        self, make: Callable[[], Credential]
+    ):
+        credential = make()
+
+        assert copy.copy(credential) is credential
+        assert copy.deepcopy(credential) is credential
+
+    @pytest.mark.parametrize("make", CREDENTIALS, ids=CREDENTIAL_IDS)
+    def test_a_deep_copied_settings_object_keeps_the_credential(
+        self, make: Callable[[], Credential]
+    ):
+        credential = make()
+        settings = {"auth": credential, "urls": ["https://query.test.keboola.com"]}
+
+        copied = copy.deepcopy(settings)
+
+        assert copied["auth"] is credential
+        assert copied["urls"] is not settings["urls"]
+
+    @pytest.mark.parametrize("make", CREDENTIALS, ids=CREDENTIAL_IDS)
+    @pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
+    def test_pickling_is_refused_on_purpose(
+        self, make: Callable[[], Credential], protocol: int
+    ):
+        with pytest.raises(TypeError) as exc_info:
+            pickle.dumps(make(), protocol=protocol)
+
+        assert "never be serialised" in str(exc_info.value)
+        assert "storage-token" not in str(exc_info.value)
