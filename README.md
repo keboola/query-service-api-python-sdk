@@ -234,8 +234,9 @@ in the sync and the async methods:
 - **The token of a credential** is a value or a callable with no arguments that
   returns the current value. The SDK checks the value each time (non-empty,
   printable ASCII, no spaces) and raises `CredentialError` before it sends
-  anything. `CredentialError` is not a `ValidationError` (a 400 from the server),
-  so a handler for bad queries never reports a token problem.
+  anything. `CredentialError` is a `ValidationError` with no status code (the
+  same as in the JS client); a server's 400 has `status_code` 400. Catch
+  `CredentialError` first to tell a token problem apart from other invalid input.
 - **The credential of the client** (`auth=`) is a credential or a **provider**:
   a callable with no arguments that returns a credential.
 
@@ -370,8 +371,8 @@ a subclass of `QueryServiceError` (status 403). A governed workspace refuses
 every query whose caller matches no policy. A call with only the Storage API
 token gets this error too. Other errors do not change.
 
-Query Service does not refuse every caller this way (an older Query Service
-refuses an app user too; the behavior below comes with its next release). For a table with no policy,
+Query Service does not refuse every caller this way (Query Service before
+v1.23.0 refuses an app user too). For a table with no policy,
 or a policy that selects the caller by no rule and has no default, an
 **administrator** (a Storage API token) gets `RowLevelSecurityError`, but an
 **app user** (an app user token) gets a successful result with no rows, so for an
