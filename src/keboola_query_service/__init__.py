@@ -105,8 +105,8 @@ Exceptions
 ----------
 - ``QueryServiceError`` - Base exception
 - ``AuthenticationError`` - Invalid token (401)
-- ``CredentialError`` - A credential cannot be used; nothing was sent
-- ``ValidationError`` - Invalid request (400)
+- ``ValidationError`` - Invalid input, refused by the SDK or by the server (400)
+- ``CredentialError`` - Unusable credential, nothing sent (a ``ValidationError``)
 - ``NotFoundError`` - Resource not found (404)
 - ``JobError`` - Query execution failed
 - ``JobTimeoutError`` - Job didn't complete in time

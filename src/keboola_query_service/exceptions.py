@@ -34,21 +34,25 @@ class AuthenticationError(QueryServiceError):
     pass
 
 
-class CredentialError(QueryServiceError):
-    """Raised before anything is sent when a credential cannot be used.
+class ValidationError(QueryServiceError):
+    """Raised when the SDK or the server refuses the input of a request.
 
-    An empty or unsendable token, a token callback that returns one, a bad
-    ``project_id`` or a wrong ``storage_token``. It is not a ``ValidationError``
-    (a 400 answered by the server for the request itself), so code that catches
-    ``ValidationError`` to report a bad query never reports a credential problem
-    as one. It has no status code, as no request was made.
+    The SDK refuses it before sending anything (``status_code`` is None), for
+    example a bad ``page_size`` or an unusable credential (``CredentialError``).
+    The server refuses it with a 400 (``status_code`` is 400).
     """
 
     pass
 
 
-class ValidationError(QueryServiceError):
-    """Raised when request validation fails (400)."""
+class CredentialError(ValidationError):
+    """Raised before anything is sent when a credential cannot be used.
+
+    An empty or unsendable token, a token callback that returns one, a bad
+    ``project_id`` or a wrong ``storage_token``. It has no status code, as no
+    request was made. Catch it before ``ValidationError`` to tell it apart from
+    other invalid input.
+    """
 
     pass
 

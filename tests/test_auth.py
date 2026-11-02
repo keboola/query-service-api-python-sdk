@@ -867,9 +867,9 @@ class TestConcurrentUsers:
 
 
 class TestCredentialError:
-    def test_is_a_query_service_error_but_not_a_validation_error(self):
+    def test_is_a_validation_error(self):
+        assert issubclass(CredentialError, ValidationError)
         assert issubclass(CredentialError, QueryServiceError)
-        assert not issubclass(CredentialError, ValidationError)
 
     @pytest.mark.parametrize(
         "token", ["", " ", "sec ret"], ids=["empty", "blank", "space"]
@@ -881,12 +881,12 @@ class TestCredentialError:
         assert exc_info.value.status_code is None
         assert "sec" not in str(exc_info.value)
 
-    def test_a_validation_error_handler_does_not_catch_it(self):
-        with pytest.raises(CredentialError):
-            try:
-                Client(BASE_URL, "")
-            except ValidationError:  # pragma: no cover - must not be reached
-                pytest.fail("a credential problem was reported as a request problem")
+    def test_a_validation_error_handler_catches_it_without_a_status_code(self):
+        with pytest.raises(ValidationError) as exc_info:
+            Client(BASE_URL, "")
+
+        assert isinstance(exc_info.value, CredentialError)
+        assert exc_info.value.status_code is None
 
     def test_empty_callback_value_is_a_credential_error_when_read(self):
         credential = StorageToken(lambda: "")
